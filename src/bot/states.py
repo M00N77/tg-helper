@@ -32,3 +32,12 @@ class KanbanAuthStates(StatesGroup):
     waiting_password = State()
     waiting_company = State()
     waiting_for_board = State()
+
+
+class KanbanCardStates(StatesGroup):
+    waiting_title = State()
+    waiting_description = State()
+    waiting_column = State()
+    editing_title = State()
+    editing_desc = State()
+    moving_task = State()

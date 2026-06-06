@@ -1,5 +1,4 @@
 """Интеграция с YouGile канбан-доской."""
-import aiohttp
 import httpx
 import logging
 from typing import Dict, List, Optional
@@ -21,8 +20,9 @@ class YouGileClient:
         """Получить список колонок доски"""
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f"{self.base_url}/boards/{self.board_id}/columns",
-                headers=self.headers
+                f"{self.base_url}/columns",
+                headers=self.headers,
+                params={"boardId": self.board_id}
             )
             response.raise_for_status()
             data = response.json()
@@ -36,86 +36,147 @@ class YouGileClient:
         assignee_ids: Optional[List[str]] = None
     ) -> Dict:
         """Создать карточку задачи"""
+        payload = {"title": title, "columnId": column_id}
+        if description:
+            payload["description"] = description
+        logging.warning(f"[YouGile][create_card] payload={payload}")
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                f"{self.base_url}/cards",
+                f"{self.base_url}/tasks",
                 headers=self.headers,
-                json={
-                    "title": title,
-                    "description": description,
-                    "columnId": column_id,
-                    "assignedUsersIds": assignee_ids or []
-                }
+                json=payload
             )
-            response.raise_for_status()
+            if response.status_code >= 400:
+                body = response.text
+                logging.warning(
+                    f"[YouGile][create_card] status={response.status_code} body={body}"
+                )
+                raise RuntimeError(f"YouGile POST /tasks вернул {response.status_code}: {body}")
             return response.json()
     
     async def move_card(self, card_id: str, column_id: str) -> Dict:
         """Переместить карточку в другую колонку"""
+        payload = {"columnId": column_id}
+        logging.warning(f"[YouGile][move_card] PUT /tasks/{card_id} payload={payload}")
         async with httpx.AsyncClient() as client:
-            response = await client.patch(
-                f"{self.base_url}/cards/{card_id}",
+            response = await client.put(
+                f"{self.base_url}/tasks/{card_id}",
                 headers=self.headers,
-                json={"columnId": column_id}
+                json=payload
             )
-            response.raise_for_status()
+            if response.status_code >= 400:
+                body = response.text
+                logging.warning(
+                    f"[YouGile][move_card] status={response.status_code} body={body}"
+                )
+                raise RuntimeError(f"YouGile PUT /tasks/{card_id} вернул {response.status_code}: {body}")
             return response.json()
     
     async def get_cards_in_column(self, column_id: str, limit: int = 50) -> List[Dict]:
         """Получить карточки в колонке"""
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f"{self.base_url}/columns/{column_id}/cards",
+                f"{self.base_url}/tasks",
                 headers=self.headers,
-                params={"limit": limit}
+                params={"columnId": column_id, "limit": limit}
             )
             response.raise_for_status()
             data = response.json()
             return data.get("content", [])
     
     async def get_boards(self) -> list:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                "https://yougile.com/api-v2/boards",
-                headers={"Authorization": f"Bearer {self.api_token}"}
-            ) as resp:
-                data = await resp.json()
-                return data.get("content", [])
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.base_url}/boards",
+                headers=self.headers
+            )
+            if response.status_code != 200:
+                body = response.text
+                logging.warning(
+                    f"[YouGile][get_boards] status={response.status_code} body={body}"
+                )
+                raise RuntimeError(
+                    f"YouGile /boards вернул {response.status_code}: {body}"
+                )
+            data = response.json()
+            return data.get("content", [])
 
     async def update_card(self, card_id: str, **kwargs) -> Dict:
         """Обновить карточку"""
+        logging.warning(f"[YouGile][update_card] PUT /tasks/{card_id} payload={kwargs}")
         async with httpx.AsyncClient() as client:
-            response = await client.patch(
-                f"{self.base_url}/cards/{card_id}",
+            response = await client.put(
+                f"{self.base_url}/tasks/{card_id}",
                 headers=self.headers,
                 json=kwargs
+            )
+            if response.status_code >= 400:
+                body = response.text
+                logging.warning(
+                    f"[YouGile][update_card] status={response.status_code} body={body}"
+                )
+                raise RuntimeError(f"YouGile PUT /tasks/{card_id} вернул {response.status_code}: {body}")
+            return response.json()
+
+    async def get_task(self, task_id: str) -> Dict:
+        """Получить данные одной задачи"""
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"{self.base_url}/tasks/{task_id}",
+                headers=self.headers,
             )
             response.raise_for_status()
             return response.json()
 
+    async def delete_task(self, task_id: str) -> None:
+        """Удалить задачу"""
+        async with httpx.AsyncClient() as client:
+            response = await client.delete(
+                f"{self.base_url}/tasks/{task_id}",
+                headers=self.headers,
+            )
+            if response.status_code not in (200, 204):
+                body = response.text
+                raise RuntimeError(
+                    f"YouGile DELETE /tasks вернул {response.status_code}: {body}"
+                )
+
     async def generate_token(
         self, login: str, password: str, company_name: str
     ) -> str:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://yougile.com/api-v2/auth/companies",
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.base_url}/auth/companies",
                 json={"login": login, "password": password}
-            ) as resp:
-                data = await resp.json()
+            )
+            if response.status_code != 200:
+                body = response.text
+                logging.warning(
+                    f"[YouGile][auth/companies] status={response.status_code} body={body}"
+                )
+                raise RuntimeError(f"Ошибка авторизации: {body}")
 
+            data = response.json()
             companies = data.get("content", [])
             if not companies:
-                raise RuntimeError("Нет доступных компаний")
+                raise RuntimeError("Аккаунт не привязан ни к одной компании")
 
+            # TODO: учитывать company_name, если у пользователя несколько компаний
             company_id = companies[0]["id"]
 
-            async with session.post(
-                "https://yougile.com/api-v2/auth/keys",
+            response = await client.post(
+                f"{self.base_url}/auth/keys",
                 json={"login": login, "password": password, "companyId": company_id}
-            ) as resp:
-                key_data = await resp.json()
+            )
+            if response.status_code not in (200, 201):
+                body = response.text
+                logging.warning(
+                    f"[YouGile][auth/keys] status={response.status_code} body={body}"
+                )
+                raise RuntimeError(f"Ошибка получения ключа: {body}")
 
-            token = key_data.get("key")
-            if not token:
-                raise RuntimeError(f"Не удалось получить токен: {key_data}")
-            return token
+            key_data = response.json()
+            if "key" not in key_data:
+                raise RuntimeError(f"Ответ не содержит ключ: {key_data}")
+
+            return key_data["key"]
