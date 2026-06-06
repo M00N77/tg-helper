@@ -755,8 +755,12 @@ async def cb_kanban_tasks(callback: CallbackQuery):
 
     col_name = next((c.get("title", "?") for c in columns if c["id"] == column_id), "?")
 
+    boards = await client.get_boards()
+    board_title = next((b["title"] for b in boards if b["id"] == team.kanban_board_id), "Канбан-доска")
+    from src.bot.handlers.menu import breadcrumb
+
     if not cards:
-        text = f"📂 <b>{col_name}</b>\n\nКолонка пуста. Добавить задачу?"
+        text = breadcrumb("📊", board_title, col_name) + f"📂 <b>{col_name}</b>\n\nКолонка пуста. Добавить задачу?"
         kb = InlineKeyboardBuilder()
         kb.row(InlineKeyboardButton(text="➕ Добавить в эту колонку", callback_data=f"kanban:add_to:{column_id}"))
         kb.row(InlineKeyboardButton(text="◀ Назад к доске", callback_data="kanban:board"))
@@ -764,7 +768,7 @@ async def cb_kanban_tasks(callback: CallbackQuery):
         await callback.answer()
         return
 
-    text = f"📂 <b>{col_name}</b> ({len(cards)}):\n\n"
+    text = breadcrumb("📊", board_title, col_name) + f"📂 <b>{col_name}</b> ({len(cards)}):\n\n"
     kb = InlineKeyboardBuilder()
     for card in cards:
         title = card.get("title", "?")[:30]
@@ -806,7 +810,11 @@ async def cb_kanban_task(callback: CallbackQuery):
     column_id = task.get("columnId", "")
     col_name = next((c.get("title", "?") for c in columns if c["id"] == column_id), "?")
 
-    text = f"📋 <b>{title}</b>\n"
+    boards = await client.get_boards()
+    board_title = next((b["title"] for b in boards if b["id"] == team.kanban_board_id), "Канбан-доска")
+    from src.bot.handlers.menu import breadcrumb
+
+    text = breadcrumb("📊", board_title, col_name, title[:20]) + f"📋 <b>{title}</b>\n"
     if description:
         text += f"\n📝 {description}\n"
     text += f"\n📂 Колонка: {col_name}"

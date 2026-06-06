@@ -12,6 +12,7 @@ from src.bot.handlers import (
     free_text,
     kanban,
     login,
+    menu,
     news_cmd,
     news_topics,
     search,
@@ -42,6 +43,7 @@ async def run_bot(userbot_manager: UserbotManager) -> None:
 
     dp.include_router(start.router)
     dp.include_router(login.router)
+    dp.include_router(menu.router)
     dp.include_router(settings_handlers.router)
     dp.include_router(chat_cmd.router)
     dp.include_router(catchup_cmd.router)

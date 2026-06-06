@@ -70,7 +70,10 @@ async def _render_menu(telegram_id: int) -> tuple[str, InlineKeyboardMarkup]:
         InlineKeyboardButton(text="🎤 Транскрипция", callback_data="set:sec:transcription"),
     )
     kb.row(InlineKeyboardButton(text="🔑 API-ключи", callback_data="set:sec:keys"))
-    kb.row(InlineKeyboardButton(text="❌ Закрыть", callback_data="set:close"))
+    kb.row(
+        InlineKeyboardButton(text="❌ Закрыть", callback_data="set:close"),
+        InlineKeyboardButton(text="◀ Главное меню", callback_data="menu:back"),
+    )
     return text, kb.as_markup()
 
 
