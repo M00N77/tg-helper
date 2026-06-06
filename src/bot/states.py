@@ -41,3 +41,9 @@ class KanbanCardStates(StatesGroup):
     editing_title = State()
     editing_desc = State()
     moving_task = State()
+
+
+class MenuStates(StatesGroup):
+    waiting_chat_name = State()
+    waiting_send_query = State()
+    waiting_news_topic = State()
