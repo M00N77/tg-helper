@@ -246,8 +246,9 @@ async def process_password(message: Message, state: FSMContext):
                 session, message.chat.id, token
             )
         await wait_msg.edit_text(
-            "✅ Авторизация успешна! Токен YouGile сохранён.\n"
-            "Теперь укажи ID доски командой /kanban_board"
+            f"✅ Авторизация успешна!\n"
+            f"Токен: <code>{token}</code>\n\n"
+            f"Теперь укажи ID доски командой /kanban_board"
         )
     except ValueError as e:
         await wait_msg.edit_text(f"❌ {e}")

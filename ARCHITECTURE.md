@@ -38,6 +38,7 @@ A personal Telegram assistant. **Two accounts in one:**
 | `news_topics` | Topics for automated news digests |
 | `index_jobs` | Vector indexing progress |
 | `transcription_cache` | Voice transcription cache |
+| `teams` | YouGile kanban token, board ID, provider per chat |
 
 All keys and tokens are stored **encrypted** (Fernet).
 
@@ -62,6 +63,8 @@ All keys and tokens are stored **encrypted** (Fernet).
 | `/news topic [--hours=N]` | News digest by topic |
 | `/news_channels` | Mark/unmark news source channels |
 | `/news_topics` | Automated digest management |
+| `/kanban_login` | FSM wizard: login → password → auto-auth via YouGile API |
+| `/kanban_board` | List YouGile boards, pick one by number |
 | `Any text` | **Free-text AI agent** — determines intent and executes |
 
 ---
@@ -180,21 +183,38 @@ smart_find() → keywords FTS5 + name_score + Telegram fallback
 Keys encrypted with Fernet, replies confirmed via PendingAction
 ```
 
+**Session pattern:** Handlers use `async with get_session() as session:` (from `src.db.session`) — **not** aiogram dependency injection.
 **Single-tenant:** `OwnerOnly` filter on all routers — only `owner_telegram_id` can interact with the bot.
 
 ---
 
-## 15. Work-in-Progress (Not Connected)
+## 15. Kanban Integration (YouGile)
 
-- **Kanban** (YouGile/Trello) — task management
-- **Meetings** (Yandex Telemost) — join, record, transcribe, extract tasks
-- **Teams** — multi-user with roles
+Fully implemented and connected. Flow:
 
-Code exists in `src/bot/handlers/`, but routers are not registered in `app.py`.
+1. `/kanban_login` — FSM wizard asks for login and password
+2. `YouGileClient.generate_token()` calls `POST /api-v2/auth/companies` to list companies, then `POST /api-v2/auth/keys` to create an API key for the first company
+3. Token is saved to `teams` table via `update_team_kanban()`
+4. `/kanban_board` — calls `GET /api-v2/boards` with the saved token, shows numbered list
+5. User picks a board by number → `board_id` saved to `teams` table
+
+**Files:**
+- `src/bot/handlers/kanban.py` — FSM handlers and board selection
+- `src/bot/handlers/yougile.py` — `YouGileClient` with `get_columns()`, `create_card()`, `move_card()`, `get_cards_in_column()`, `get_boards()`, `generate_token()`
+- `src/bot/states.py` — `KanbanStates` (waiting_token) and `KanbanAuthStates` (waiting_login, waiting_password, waiting_for_board)
+- `src/db/models.py` — `Team` model (chat_id, kanban_token, kanban_board_id, kanban_provider)
+- `src/db/repo.py` — `get_team_by_chat()`, `update_team_kanban()`
 
 ---
 
-## 16. Technology Stack
+## 16. Work-in-Progress (Not Connected)
+
+- **Meetings** (Yandex Telemost) — join, record, transcribe, extract tasks
+- **Teams** — multi-user with roles
+
+---
+
+## 17. Technology Stack
 
 | Component | Technology |
 |---|---|
