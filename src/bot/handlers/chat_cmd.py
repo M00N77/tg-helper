@@ -175,6 +175,7 @@ async def cb_tasks(callback: CallbackQuery, userbot_manager: UserbotManager) -> 
         user_id=owner.id,
         contact=contact,
         messages=messages,
+        chat_id=message.chat.id,
     )
 
     if not items:

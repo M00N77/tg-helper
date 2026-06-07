@@ -1,459 +1,263 @@
-"""Присутствие на встречах: Яндекс Телемост, распознавание речи, извлечение задач."""
-import asyncio
-import glob
+"""Обработка встреч: транскрипция аудио/видео, саммари, создание задач на YouGile."""
 import json
-import re
-from datetime import datetime
+import logging
 from pathlib import Path
 
 from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, FSInputFile
+from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import InlineKeyboardButton
 
 from src.bot.filters import OwnerOnly
-from src.bot.states import MeetingStates
-from src.bot.handlers.meeting_listener import MeetingListener
 from src.core.transcription import transcription_service
-from src.bot.handlers.yougile import YouGileClient
-from src.db.repo import create_meeting, update_meeting_transcript, update_meeting_summary, get_team_by_chat
+from src.db.repo import get_or_create_user, get_team_by_chat, get_api_key
 from src.db.session import get_session
 from src.llm.router import build_provider
+from src.llm.base import ChatMessage
+from src.bot.handlers.yougile import YouGileClient
+from src.config import settings as app_settings
 
+
+logger = logging.getLogger(__name__)
 
 router = Router(name="meeting")
+router.message.filter(OwnerOnly())
 
-# Хранилище активных встреч (в production использовать Redis)
-active_meetings = {}
+MEETING_EXTRACT_SYSTEM = (
+    "Ты анализируешь транскрипцию встречи.\n"
+    "Верни СТРОГИЙ JSON (без markdown-обёртки):\n"
+    '{\n'
+    '  "summary": "саммари встречи 3-5 предложений",\n'
+    '  "tasks": [\n'
+    '    {"title": "название задачи", "assignee": "имя или null", "deadline": "ISO-8601 или null"},\n'
+    '    ...\n'
+    '  ]\n'
+    '}\n'
+    'Если задач нет — tasks: [].\n'
+    "Опирайся только на то, что сказано в тексте."
+)
 
 
 @router.message(Command("meeting"))
-async def cmd_meeting(message: Message, state: FSMContext):
-    """Управление встречами"""
-    args = message.text.split()[1:] if message.text else []
-    if args and args[0] == "join":
-        if len(args) > 1:
-            url = " ".join(args[1:])
-            if not url.startswith("http"):
-                url = f"https://telemost.yandex.ru/j/{url}"
-            await _join_meeting_by_url(url, message)
-        else:
-            await state.set_state(MeetingStates.waiting_url)
-            await message.answer(
-                "🔗 Отправь ссылку на Яндекс Телемост:"
-            )
-        return
+async def cmd_meeting(message: Message):
     kb = InlineKeyboardBuilder()
-    kb.row(
-        InlineKeyboardButton(text="🎥 Подключиться", callback_data="meeting:join"),
-        InlineKeyboardButton(text="⏺ Начать запись", callback_data="meeting:record"),
-    )
-    kb.row(
-        InlineKeyboardButton(text="📝 Обработать", callback_data="meeting:process"),
-        InlineKeyboardButton(text="🚪 Выйти", callback_data="meeting:leave"),
-    )
-    
+    kb.row(InlineKeyboardButton(text="📎 Отправить запись", callback_data="meeting:upload_hint"))
+    kb.row(InlineKeyboardButton(text="❓ Как это работает", callback_data="meeting:howto"))
+
+    async with get_session() as session:
+        team = await get_team_by_chat(session, message.chat.id)
+
+    if team and team.kanban_token:
+        kb.row(InlineKeyboardButton(text="📊 Создать задачи на YouGile", callback_data="meeting:yougile"))
+
     await message.answer(
-        "🎥 <b>Присутствие на встречах</b>\n\n"
-        "Бот может:\n"
-        "✅ Подключаться к Яндекс Телемосту\n"
-        "✅ Слышать и записывать обсуждение\n"
-        "✅ Распознавать устные задачи и договорённости\n"
-        "✅ Автоматически создавать карточки в канбане\n\n"
-        "Просто отправьте ссылку на встречу, и бот сделает всё сам!",
-        reply_markup=kb.as_markup()
+        "🎙 Встречи\n\n"
+        "Отправь запись встречи — бот транскрибирует, "
+        "сделает саммари и создаст задачи на YouGile.",
+        reply_markup=kb.as_markup(),
     )
 
 
-@router.callback_query(F.data == "meeting:join")
-async def cb_meeting_join(callback: CallbackQuery, state: FSMContext):
-    """Подключение к Яндекс Телемосту"""
-    await callback.message.answer(
-        "🔗 <b>Подключение к встрече</b>\n\n"
-        "Введите ссылку на Яндекс Телемост:\n"
-        "Пример: https://telemost.yandex.ru/j/1234567890\n\n"
-        "Или отправьте ID встречи: 1234567890\n\n"
-        "Отмена — /cancel"
+@router.callback_query(F.data == "meeting:upload_hint")
+async def cb_meeting_upload_hint(callback: CallbackQuery):
+    await callback.answer("📎 Просто отправь аудио или видео файл встречи в этот чат.", show_alert=True)
+
+
+@router.callback_query(F.data == "meeting:howto")
+async def cb_meeting_howto(callback: CallbackQuery):
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="◀ Назад", callback_data="meeting:back"))
+    await callback.message.edit_text(
+        "Как использовать:\n"
+        "1. Запиши встречу в Яндекс Телемосте\n"
+        "2. Скачай запись (кнопка в интерфейсе Телемоста)\n"
+        "3. Отправь файл сюда (аудио или видео)\n"
+        "4. Бот транскрибирует и создаст задачи на доске",
+        reply_markup=kb.as_markup(),
     )
-    await state.set_state(MeetingStates.waiting_url)
     await callback.answer()
 
 
-async def _join_meeting_by_url(url: str, message: Message) -> None:
-    """Подключиться к Яндекс Телемосту по ссылке."""
-    wait_msg = await message.answer("⏳ Подключаюсь к встрече...")
+@router.callback_query(F.data == "meeting:back")
+async def cb_meeting_back(callback: CallbackQuery):
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="📎 Отправить запись", callback_data="meeting:upload_hint"))
+    kb.row(InlineKeyboardButton(text="❓ Как это работает", callback_data="meeting:howto"))
+
+    async with get_session() as session:
+        team = await get_team_by_chat(session, callback.message.chat.id)
+
+    if team and team.kanban_token:
+        kb.row(InlineKeyboardButton(text="📊 Создать задачи на YouGile", callback_data="meeting:yougile"))
+
+    await callback.message.edit_text(
+        "🎙 Встречи\n\n"
+        "Отправь запись встречи — бот транскрибирует, "
+        "сделает саммари и создаст задачи на YouGile.",
+        reply_markup=kb.as_markup(),
+    )
+    await callback.answer()
+
+
+@router.message(F.audio | F.video | F.voice | F.document)
+async def handle_meeting_file(message: Message):
+    media = message.audio or message.video or message.voice or message.document
+    if media is None:
+        return
+    if message.document and media.mime_type:
+        if not media.mime_type.startswith("audio/") and not media.mime_type.startswith("video/"):
+            return
+
+    media_dir = app_settings.data_dir / "media" / "meetings"
+    media_dir.mkdir(parents=True, exist_ok=True)
+
+    if message.voice:
+        suffix = ".ogg"
+    elif message.audio:
+        suffix = ".mp3"
+    elif message.video:
+        suffix = ".mp4"
+    elif message.document:
+        suffix = Path(media.file_name).suffix or ".bin"
+    else:
+        suffix = ".ogg"
+
+    target = media_dir / f"meeting_{message.message_id}{suffix}"
+
+    notice = await message.answer("⏳ Получаю файл…")
     try:
-        async with get_session() as session:
-            team = await get_team_by_chat(session, message.chat.id)
-            if not team:
-                await wait_msg.edit_text("❌ Сначала создайте команду: /team create")
-                return
-            meeting = await create_meeting(
-                session, team_id=team.id, telemost_url=url
-            )
+        await message.bot.download(media.file_id, destination=str(target))
+    except Exception as e:
+        await notice.edit_text(f"❌ Не удалось скачать файл: {e}")
+        return
 
-        kb = InlineKeyboardBuilder()
-        kb.button(
-            text="🎙 Начать запись",
-            callback_data=f"meeting:record:{meeting.id}"
-        )
+    async with get_session() as session:
+        owner = await get_or_create_user(session, message.from_user.id)
+        mode = owner.settings.transcription_mode
+        openai_key = await get_api_key(session, owner, "openai")
 
-        await wait_msg.edit_text(
-            f"✅ Встреча создана (ID: {meeting.id})\n"
-            f"🔗 {url}\n\n"
-            "Нажми кнопку ниже чтобы начать запись:",
-            reply_markup=kb.as_markup()
+    await notice.edit_text("🎙 Транскрибирую запись встречи…")
+    try:
+        transcript = await transcription_service.transcribe(
+            target,
+            file_id=str(message.message_id),
+            mode=mode,
+            openai_key=openai_key,
+            language="ru",
         )
     except Exception as e:
-        await wait_msg.edit_text(f"❌ Ошибка: {e}")
-
-
-@router.message(MeetingStates.waiting_url, F.text)
-async def process_meeting_url(message: Message, state: FSMContext):
-    """Получить ссылку на Яндекс Телемост через FSM"""
-    url = message.text.strip()
-
-    if url.isdigit():
-        url = f"https://telemost.yandex.ru/j/{url}"
-
-    if "telemost.yandex.ru" not in url:
-        await message.answer(
-            "❌ Неверная ссылка. Ожидаю:\n"
-            "https://telemost.yandex.ru/j/1234567890\n\n"
-            "Попробуй ещё раз или /cancel"
-        )
+        await notice.edit_text(f"❌ Ошибка транскрипции: {e}")
         return
 
-    await state.clear()
-    await _join_meeting_by_url(url, message)
-
-
-@router.callback_query(F.data == "meeting:record")
-async def cb_meeting_record(callback: CallbackQuery):
-    """Начать запись встречи"""
-    meeting_data = active_meetings.get(callback.message.chat.id)
-    if not meeting_data:
-        await callback.answer("Нет активной встречи. Сначала подключитесь.", show_alert=True)
+    if not transcript or not transcript.strip():
+        await notice.edit_text("❌ Не удалось распознать речь в файле.")
         return
-    
-    await callback.message.answer("🎙 <b>Начинаю запись встречи...</b>\nЭто может занять несколько минут.")
-    
-    listener = meeting_data["listener"]
-    
-    # Запись 5 минут (можно настроить)
-    audio_data = await listener.capture_audio_duration(300)
-    
-    # Сохраняем аудио
-    media_dir = Path("data/media")
-    media_dir.mkdir(parents=True, exist_ok=True)
-    audio_path = media_dir / f"meeting_{meeting_data['meeting_id']}.wav"
-    
-    with open(audio_path, "wb") as f:
-        f.write(audio_data)
-    
-    await callback.message.answer(
-        f"✅ Запись сохранена: {audio_path.name}\n"
-        f"📊 Размер: {len(audio_data) / 1024 / 1024:.1f} MB\n\n"
-        f"🔄 <b>Расшифровываю разговор...</b>"
-    )
-    
-    # Транскрипция
-    transcript = await transcription_service.transcribe(
-        audio_path,
-        mode="api",  # для качества используем API
-        language="ru"
-    )
-    
-    # Сохраняем транскрипт
-    await update_meeting_summary(meeting_data["meeting_id"], transcript=transcript[:5000])
-    
-    await callback.message.answer(
-        f"📝 <b>Расшифровка встречи</b>\n\n"
-        f"{transcript[:1500]}...\n\n"
-        f"<i>Полный текст сохранён в БД</i>"
-    )
-    
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("meeting:record:"))
-async def cb_meeting_record_by_id(callback: CallbackQuery):
-    """Начать запись встречи через UI Телемоста и скачать файл."""
-    meeting_id = int(callback.data.split(":")[2])
-    wait_msg = await callback.message.answer(
-        "🎙 Подключаюсь к встрече и начинаю запись..."
-    )
-    await callback.answer()
 
     async with get_session() as session:
-        from src.db.models import Meeting
-        meeting = await session.get(Meeting, meeting_id)
-        if not meeting:
-            await wait_msg.edit_text("❌ Встреча не найдена в БД")
-            return
+        owner = await get_or_create_user(session, message.from_user.id)
+        provider = await build_provider(session, owner)
 
-    listener = MeetingListener(meeting.telemost_url)
-    joined = await listener.join_meeting()
-
-    if not joined:
-        await wait_msg.edit_text(
-            "❌ Не удалось подключиться к Телемосту."
+    if provider is None:
+        await notice.edit_text(
+            f"✅ Транскрипция готова:\n\n{transcript[:1000]}…\n\n"
+            "⚠️ Добавь LLM-ключ в /settings чтобы извлечь задачи."
         )
         return
 
-    # Запускаем запись через UI
-    await wait_msg.edit_text("⏺ Запускаю запись через Телемост...")
-    recording_started = await listener.start_recording_via_ui()
-
-    if not recording_started:
-        await wait_msg.edit_text(
-            "❌ Не удалось найти кнопку записи в Телемосте.\n"
-            "Возможно интерфейс изменился."
+    await notice.edit_text("🤖 Анализирую встречу…")
+    try:
+        raw = await provider.chat(
+            [
+                ChatMessage(role="system", content=MEETING_EXTRACT_SYSTEM),
+                ChatMessage(role="user", content=f"Транскрипция:\n\n{transcript[:8000]}"),
+            ],
+            heavy=True,
+        )
+        data = json.loads(raw.strip().strip("```").lstrip("json").strip())
+        summary = data.get("summary", "")
+        tasks = data.get("tasks", [])
+    except Exception as e:
+        await notice.edit_text(
+            f"✅ Транскрипция готова, но разбор не удался: {e}\n\n"
+            f"{transcript[:800]}"
         )
         return
 
-    duration = 300
-    await wait_msg.edit_text(
-        f"🔴 Идёт запись встречи ({duration // 60} мин)...\n"
-        "Бот сидит на встрече и пишет разговор."
-    )
-    await asyncio.sleep(duration)
-
-    # Останавливаем запись
-    await listener.stop_recording_via_ui()
-    await wait_msg.edit_text(
-        "✅ Запись остановлена.\n"
-        "⏳ Файл скачивается в папку загрузок браузера...\n"
-        "Подожди 10 секунд."
-    )
-    await asyncio.sleep(10)
-
-    # Ищем последний скачанный файл
-    downloads = sorted(
-        glob.glob(
-            str(Path.home() / "Downloads" / "*.webm")
-        ) + glob.glob(
-            str(Path.home() / "Downloads" / "*.mp4")
-        ),
-        key=lambda f: Path(f).stat().st_mtime,
-        reverse=True
-    )
-
-    if not downloads:
-        await wait_msg.edit_text(
-            "⚠️ Файл записи не найден в папке Downloads.\n"
-            "Попробуй скачать вручную и отправь боту."
-        )
-        return
-
-    audio_path = Path(downloads[0])
     async with get_session() as session:
-        await update_meeting_transcript(
-            session, meeting_id, "", str(audio_path)
-        )
+        team = await get_team_by_chat(session, message.chat.id)
 
-    await listener.leave_meeting()
+    created_count = 0
+    if team and team.kanban_token and team.kanban_board_id and tasks:
+        client = YouGileClient(team.kanban_token, team.kanban_board_id)
+        try:
+            columns = await client.get_columns()
+            first_col_id = columns[0]["id"] if columns else None
+        except Exception:
+            first_col_id = None
+
+        if first_col_id:
+            for task in tasks[:10]:
+                title = (task.get("title") or "").strip()
+                if not title:
+                    continue
+                try:
+                    await client.create_card(title, "", first_col_id)
+                    created_count += 1
+                except Exception:
+                    pass
+
+    lines = [f"📋 <b>Встреча — саммари</b>\n\n{summary}"]
+
+    if tasks:
+        lines.append(f"\n✅ <b>Задачи ({len(tasks)}):</b>")
+        for t in tasks[:10]:
+            title = t.get("title", "?")
+            assignee = t.get("assignee")
+            deadline = t.get("deadline")
+            tail = ""
+            if assignee:
+                tail += f" · {assignee}"
+            if deadline:
+                tail += f" · {deadline[:10]}"
+            lines.append(f"  • {title}{tail}")
+    else:
+        lines.append("\nЗадач не выявлено.")
+
+    if created_count > 0:
+        lines.append(f"\n📊 Создано на доске YouGile: <b>{created_count}</b> задач")
+    elif tasks and (not team or not team.kanban_token):
+        lines.append("\n💡 Подключи YouGile (/kanban) чтобы задачи создавались автоматически.")
 
     kb = InlineKeyboardBuilder()
-    kb.button(
-        text="📝 Расшифровать и извлечь задачи",
-        callback_data=f"meeting:transcribe:{meeting_id}"
-    )
-    await wait_msg.edit_text(
-        f"✅ Запись готова: {audio_path.name}\n"
-        f"📁 {audio_path}\n\n"
-        "Нажми чтобы расшифровать и создать задачи в YouGile:",
+    kb.button(text="📊 Открыть доску", callback_data="meeting:yougile")
+    await notice.edit_text(
+        "\n".join(lines)[:4000],
+        parse_mode="HTML",
         reply_markup=kb.as_markup()
     )
 
-
-@router.callback_query(F.data.startswith("meeting:process:"))
-async def cb_meeting_process_by_id(callback: CallbackQuery):
-    """Извлечь задачи из расшифровки встречи по ID."""
-    meeting_id = int(callback.data.split(":")[2])
-    wait_msg = await callback.message.answer("🔄 Анализирую встречу...")
-    await callback.answer()
-
-    async with get_session() as session:
-        from src.db.models import Meeting
-        meeting = await session.get(Meeting, meeting_id)
-        if not meeting or not meeting.transcript:
-            await wait_msg.edit_text(
-                "❌ Нет расшифровки. Сначала запиши встречу."
-            )
-            return
-
-        team = await get_team_by_chat(session, callback.message.chat.id)
-        if not team:
-            await wait_msg.edit_text("❌ Команда не найдена")
-            return
-
-    async with get_session() as session:
-        from src.db.repo import get_or_create_user
-        owner = await get_or_create_user(session, callback.from_user.id)
-        provider = await build_provider(session, owner)
-
-    from src.llm.base import ChatMessage
-    prompt = (
-        "Из расшифровки встречи выдели все задачи и договорённости. "
-        "Верни ТОЛЬКО JSON массив без пояснений:\n"
-        '[{"title":"...","description":"...","assignee":"...","deadline":"..."}]\n\n'
-        f"Расшифровка:\n{meeting.transcript[:3000]}"
-    )
-    response = await provider.chat(
-        [ChatMessage(role="user", content=prompt)]
-    )
-
     try:
-        json_match = re.search(r'\[.*\]', response, re.DOTALL)
-        tasks = json.loads(json_match.group()) if json_match else []
+        target.unlink(missing_ok=True)
     except Exception:
-        tasks = []
+        pass
 
-    if not tasks:
-        await wait_msg.edit_text("🤷 Задач не найдено в расшифровке")
-        return
 
-    created = []
-    if team.kanban_token and team.kanban_board_id:
-        client = YouGileClient(team.kanban_token, team.kanban_board_id)
-        columns = await client.get_columns()
-        if columns:
-            first_col = columns[0]
-            for task in tasks:
-                card = await client.create_card(
-                    title=task.get("title", "Задача"),
-                    description=task.get("description", ""),
-                    column_id=first_col["id"],
-                )
-                created.append(card)
+from src.bot.handlers.kanban import build_board_text
 
+
+@router.callback_query(F.data == "meeting:yougile")
+async def cb_meeting_yougile(callback: CallbackQuery):
     async with get_session() as session:
-        await update_meeting_summary(session, meeting_id, response[:2000])
-    await wait_msg.edit_text(
-        f"✅ Готово!\n\n"
-        f"📋 Найдено задач: {len(tasks)}\n"
-        f"🎯 Создано в канбане: {len(created)}\n\n"
-        + "\n".join(f"• {t.get('title','?')}" for t in tasks[:10])
-    )
-
-
-@router.callback_query(F.data == "meeting:process")
-async def cb_meeting_process(callback: CallbackQuery):
-    """Обработка встречи: извлечение задач и создание карточек"""
-    meeting_data = active_meetings.get(callback.message.chat.id)
-    if not meeting_data:
-        await callback.answer("Нет активной встречи", show_alert=True)
+        team = await get_team_by_chat(session, callback.message.chat.id)
+    if not team or not team.kanban_token:
+        await callback.answer("Сначала выполни /kanban_login", show_alert=True)
         return
-    
-    await callback.message.answer("🔄 <b>Анализирую обсуждение...</b>")
-    
-    # Получаем транскрипт
-    async with get_session() as session:
-        from src.db.models import Meeting
-        from sqlalchemy import select
-        
-        result = await session.execute(
-            select(Meeting).where(Meeting.id == meeting_data["meeting_id"])
-        )
-        meeting = result.scalar_one_or_none()
-    
-    if not meeting or not meeting.transcript:
-        await callback.message.answer(
-            "❌ Нет расшифровки встречи.\n"
-            "Сначала используйте «Записать»."
-        )
+    if not team.kanban_board_id:
+        await callback.answer("Сначала выбери доску /kanban_board", show_alert=True)
         return
-    
-    # Извлекаем задачи через LLM
-    team = await get_team_by_chat(callback.message.chat.id)
-    
-    async with get_session() as session:
-        from src.db.repo import get_or_create_user
-        owner = await get_or_create_user(session, callback.from_user.id)
-        provider = await build_provider(session, owner)
-    
-    prompt = f"""
-    Из расшифровки встречи выдели все задачи и договорённости.
-    Верни JSON массив: [{{"title": "название", "description": "описание", "assignee": "имя", "deadline": "дата если есть"}}]
-    
-    Расшифровка:
-    {meeting.transcript[:3000]}
-    """
-    
-    response = await provider.chat([...])  # сокращено для примера
-    tasks = json.loads(response) if response else []
-    
-    # Создаём карточки в канбане
-    if team and team.kanban_token and team.kanban_provider == "yougile":
-        client = YouGileClient(team.kanban_token, team.kanban_board_id)
-        columns = await client.get_columns()
-        todo_column = next((c for c in columns if "todo" in c["name"].lower()), columns[0])
-        created = []
-        for task in tasks:
-            card = await client.create_card(
-                title=task["title"],
-                description=task["description"],
-                column_id=todo_column["id"]
-            )
-            created.append(card)
-
-        await callback.message.answer(
-            f"✅ <b>Обработка завершена!</b>\n\n"
-            f"📊 Выделено задач: {len(tasks)}\n"
-            f"🎯 Создано карточек: {len(created)}\n\n"
-            f"Все задачи добавлены в канбан-доску!"
-        )
-    else:
-        await callback.message.answer(
-            f"✅ <b>Выделено задач: {len(tasks)}</b>\n\n"
-            + "\n".join([f"• {t['title']}" for t in tasks[:10]])
-        )
-    
+    from src.bot.handlers.yougile import YouGileClient
+    client = YouGileClient(team.kanban_token, team.kanban_board_id)
+    text = await build_board_text(client, "📊 Доска")
+    await callback.message.answer(text, parse_mode="HTML")
     await callback.answer()
-
-
-@router.callback_query(F.data.startswith("meeting:transcribe:"))
-async def cb_meeting_transcribe(callback: CallbackQuery):
-    """Расшифровать запись встречи."""
-    meeting_id = int(callback.data.split(":")[2])
-    wait_msg = await callback.message.answer("🔄 Расшифровываю запись...")
-    await callback.answer()
-
-    async with get_session() as session:
-        from src.db.models import Meeting
-        meeting = await session.get(Meeting, meeting_id)
-        if not meeting or not meeting.audio_path:
-            await wait_msg.edit_text("❌ Файл записи не найден")
-            return
-
-        audio_path = Path(meeting.audio_path)
-        if not audio_path.exists():
-            await wait_msg.edit_text(
-                f"❌ Файл не найден: {audio_path}\n"
-                "Возможно был перемещён или удалён."
-            )
-            return
-
-        try:
-            transcript = await transcription_service.transcribe(
-                audio_path, mode="api", language="ru"
-            )
-            await update_meeting_transcript(
-                session, meeting_id, transcript, str(audio_path)
-            )
-
-            kb = InlineKeyboardBuilder()
-            kb.button(
-                text="🎯 Извлечь задачи в YouGile",
-                callback_data=f"meeting:process:{meeting_id}"
-            )
-            await wait_msg.edit_text(
-                f"✅ Расшифровка готова!\n\n"
-                f"📝 Первые 500 символов:\n{transcript[:500]}...\n\n"
-                "Создать задачи в YouGile?",
-                reply_markup=kb.as_markup()
-            )
-        except Exception as e:
-            await wait_msg.edit_text(f"❌ Ошибка расшифровки: {e}")

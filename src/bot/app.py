@@ -11,6 +11,7 @@ from src.bot.handlers import (
     digest_cmd,
     free_text,
     kanban,
+    kanban_analytics,
     login,
     meeting,
     menu,
@@ -56,6 +57,7 @@ async def run_bot(userbot_manager: UserbotManager) -> None:
     dp.include_router(news_cmd.router)
     dp.include_router(news_topics.router)
     dp.include_router(kanban.router)
+    dp.include_router(kanban_analytics.router)
     dp.include_router(meeting.router)
     # ВАЖНО: free_text — самым последним, чтобы команды и FSM перехватили текст раньше
     dp.include_router(free_text.router)
