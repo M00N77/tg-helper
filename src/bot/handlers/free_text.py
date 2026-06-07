@@ -663,6 +663,13 @@ def _summarize_intent_for_memory(intent: dict) -> str:
         return f"вытащил обещания из чата с {intent.get('contact')}"
     if kind == "list_todos":
         return "показал список обещаний"
+    if kind == "join_meeting":
+        url = intent.get("url", "")
+        return f"подключился к встрече: {url}" if url else "запросил ссылку на встречу"
+    if kind == "schedule_meeting":
+        return f"запланировал встречу: {intent.get('title', '')}"
+    if kind == "meeting_summary":
+        return "запросил итоги встречи"
     if kind == "chat":
         return (intent.get("reply") or "")[:160]
     return kind or ""
@@ -757,7 +764,43 @@ async def _dispatch(intent, message, state, userbot_manager, *, tz_name: str) ->
     if kind == "add_reminders_from_chat":
         await _exec_add_reminders_from_chat(intent, message, userbot_manager)
         return
+    if kind in ("join_meeting", "schedule_meeting", "meeting_summary"):
+        await _exec_meeting_intent(intent, message)
+        return
     await _execute_intent(intent, message, state, userbot_manager, tz_name=tz_name)
+
+
+async def _exec_meeting_intent(intent: dict, message: Message) -> None:
+    kind = intent.get("intent")
+    if kind == "join_meeting":
+        url = intent.get("url", "").strip()
+        if url:
+            await message.answer(
+                f"🔗 <b>Подключение к встрече</b>\n\n"
+                f"Используй:\n<code>/meeting join {url}</code>"
+            )
+        else:
+            await message.answer(
+                "🎥 <b>Подключение к встрече</b>\n\n"
+                "Отправь ссылку на Яндекс Телемост командой:\n"
+                "<code>/meeting join https://telemost.yandex.ru/j/...</code>"
+            )
+        return
+    if kind == "schedule_meeting":
+        await message.answer(
+            "📅 <b>Запланировать встречу</b>\n\n"
+            "Пока я не умею создавать встречи через API Яндекса.\n"
+            "Могу подключиться к существующей — отправь ссылку:\n"
+            "<code>/meeting join https://telemost.yandex.ru/j/...</code>"
+        )
+        return
+    if kind == "meeting_summary":
+        await message.answer(
+            "📝 <b>Итоги встречи</b>\n\n"
+            "Используй:\n<code>/meeting</code>\n\n"
+            "Запиши встречу, а я расшифрую и извлеку задачи."
+        )
+        return
 
 
 def _parse_iso_to_utc_naive(value):
