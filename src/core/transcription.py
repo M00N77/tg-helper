@@ -25,7 +25,7 @@ class TranscriptionService:
                 from faster_whisper import WhisperModel  # тяжёлый импорт держим ленивым
 
                 def _load() -> object:
-                    return WhisperModel(self._model_size, device="auto", compute_type="auto")
+                    return WhisperModel(self._model_size, device="cpu", compute_type="int8")
 
                 self._model = await asyncio.to_thread(_load)
         return self._model

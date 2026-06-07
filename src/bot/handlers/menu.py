@@ -61,7 +61,10 @@ async def cmd_menu(message: Message, userbot_manager: UserbotManager) -> None:
         InlineKeyboardButton(text="📊 Канбан", callback_data="menu:kanban"),
     )
     kb.row(
+        InlineKeyboardButton(text="🎥 Встречи", callback_data="menu:meetings"),
         InlineKeyboardButton(text="📰 Новости", callback_data="menu:news"),
+    )
+    kb.row(
         InlineKeyboardButton(text="⚙ Настройки", callback_data="menu:settings"),
     )
     await message.answer(text, reply_markup=kb.as_markup())
@@ -80,7 +83,10 @@ async def cb_menu_back(callback: CallbackQuery, userbot_manager: UserbotManager)
         InlineKeyboardButton(text="📊 Канбан", callback_data="menu:kanban"),
     )
     kb.row(
+        InlineKeyboardButton(text="🎥 Встречи", callback_data="menu:meetings"),
         InlineKeyboardButton(text="📰 Новости", callback_data="menu:news"),
+    )
+    kb.row(
         InlineKeyboardButton(text="⚙ Настройки", callback_data="menu:settings"),
     )
     await callback.message.edit_text(text, reply_markup=kb.as_markup())
@@ -461,3 +467,10 @@ async def cb_menu_settings(callback: CallbackQuery) -> None:
     from src.bot.handlers.settings import _render_menu, _safe_edit
     text, kb = await _render_menu(callback.from_user.id)
     await _safe_edit(callback.message, text, kb)
+
+
+@router.callback_query(F.data == "menu:meetings")
+async def cb_menu_meetings(callback: CallbackQuery, state: FSMContext) -> None:
+    await callback.answer()
+    from src.bot.handlers.meeting import cmd_meeting
+    await cmd_meeting(callback.message, state)

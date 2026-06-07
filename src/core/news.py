@@ -120,6 +120,8 @@ async def build_news_digest(
     # embedding темы
     try:
         topic_vec = await provider.embed(topic)
+    except NotImplementedError:
+        topic_vec = None
     except Exception:
         logger.exception("embed topic failed")
         topic_vec = None

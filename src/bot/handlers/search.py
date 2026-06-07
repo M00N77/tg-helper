@@ -119,6 +119,12 @@ async def cmd_search(message: Message, command: CommandObject, userbot_manager: 
             vec = await provider.embed(query)
             vec_hits = await vector_store.search(user_id=owner.id, embedding=vec, limit=8)
             hits_text = [(h.peer_id, h.message_id, h.text, h.peer_name, h.score) for h in vec_hits]
+        except NotImplementedError:
+            await message.answer(
+                "⚠️ Поиск недоступен с GigaChat.\n"
+                "Переключись на OpenAI в /settings → 🤖 LLM для использования поиска."
+            )
+            return
         except Exception:
             logger.exception("vector search failed")
 

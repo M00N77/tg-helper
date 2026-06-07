@@ -15,6 +15,7 @@ from src.core.timeutil import TZ_PRESETS, is_valid_tz, tz_short
 from src.db.repo import get_api_key, get_or_create_user, upsert_api_key
 from src.db.session import get_session
 from src.llm.gemini_provider import GeminiProvider
+from src.llm.gigachat_provider import GigaChatProvider
 from src.llm.openai_provider import OpenAIProvider
 
 
@@ -38,6 +39,7 @@ async def _render_menu(telegram_id: int) -> tuple[str, InlineKeyboardMarkup]:
         s = owner.settings
         openai_key = await get_api_key(session, owner, "openai")
         gemini_key = await get_api_key(session, owner, "gemini")
+        gigachat_key = await get_api_key(session, owner, "gigachat")
 
     text = (
         "⚙ <b>Настройки</b>\n\n"
@@ -49,7 +51,7 @@ async def _render_menu(telegram_id: int) -> tuple[str, InlineKeyboardMarkup]:
         f"🛡 Игнорировать архив: {_check(s.ignore_archived)}\n"
         f"🤖 LLM: <b>{s.llm_provider}</b> · {'тяжёлая' if s.use_heavy_model else 'лёгкая'}\n"
         f"🎤 Транскрипция: <b>{s.transcription_mode}</b>\n"
-        f"🔑 Ключи: OpenAI {_check(bool(openai_key))} · Gemini {_check(bool(gemini_key))}\n\n"
+        f"🔑 Ключи: OpenAI {_check(bool(openai_key))} · Gemini {_check(bool(gemini_key))} · GigaChat {_check(bool(gigachat_key))}\n\n"
         "<i>Тапни раздел, чтобы открыть его настройки и описание.</i>"
     )
     kb = InlineKeyboardBuilder()
@@ -121,7 +123,7 @@ BOOL_KEYS = {
 }
 
 CHOICE_KEYS = {
-    "llm_provider": {"openai", "gemini"},
+    "llm_provider": {"openai", "gemini", "gigachat"},
     "transcription_mode": {"local", "api", "hybrid"},
     "auto_reply_mode": {"static", "smart"},
 }
@@ -220,6 +222,7 @@ async def _render_section(telegram_id: int, section: str) -> tuple[str, InlineKe
         s = owner.settings
         openai_key = await get_api_key(session, owner, "openai")
         gemini_key = await get_api_key(session, owner, "gemini")
+        gigachat_key = await get_api_key(session, owner, "gigachat")
 
     kb = InlineKeyboardBuilder()
 
@@ -341,8 +344,10 @@ async def _render_section(telegram_id: int, section: str) -> tuple[str, InlineKe
         active = (
             LLMDefaults.OPENAI_CHAT_HEAVY if s.use_heavy_model and s.llm_provider == "openai"
             else LLMDefaults.OPENAI_CHAT_LIGHT if s.llm_provider == "openai"
-            else LLMDefaults.GEMINI_CHAT_HEAVY if s.use_heavy_model
-            else LLMDefaults.GEMINI_CHAT_LIGHT
+            else LLMDefaults.GEMINI_CHAT_HEAVY if s.use_heavy_model and s.llm_provider == "gemini"
+            else LLMDefaults.GEMINI_CHAT_LIGHT if s.llm_provider == "gemini"
+            else "GigaChat-Pro" if s.use_heavy_model and s.llm_provider == "gigachat"
+            else "GigaChat"
         )
         text = (
             "🤖 <b>LLM-провайдер</b>\n\n"
@@ -360,6 +365,10 @@ async def _render_section(telegram_id: int, section: str) -> tuple[str, InlineKe
             InlineKeyboardButton(
                 text=("• " if s.llm_provider == "gemini" else "") + "Gemini",
                 callback_data="set:choose:llm_provider:gemini",
+            ),
+            InlineKeyboardButton(
+                text=("• " if s.llm_provider == "gigachat" else "") + "GigaChat",
+                callback_data="set:choose:llm_provider:gigachat",
             ),
         )
         kb.row(InlineKeyboardButton(
@@ -424,11 +433,13 @@ async def _render_section(telegram_id: int, section: str) -> tuple[str, InlineKe
             "🔑 <b>API-ключи</b>\n\n"
             "Хранятся зашифрованными (Fernet). Можно перезаписать в любой момент.\n\n"
             f"OpenAI: {_check(bool(openai_key))}\n"
-            f"Gemini: {_check(bool(gemini_key))}"
+            f"Gemini: {_check(bool(gemini_key))}\n"
+            f"GigaChat: {_check(bool(gigachat_key))}"
         )
         kb.row(
             InlineKeyboardButton(text="🔑 OpenAI key", callback_data="set:input:openai_key"),
             InlineKeyboardButton(text="🔑 Gemini key", callback_data="set:input:gemini_key"),
+            InlineKeyboardButton(text="🔑 GigaChat key", callback_data="set:input:gigachat_key"),
         )
         kb.row(*_back_row())
 
@@ -455,6 +466,15 @@ async def cb_input_gemini(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(SettingsStates.waiting_gemini_key)
     await callback.message.answer(
         "Пришли Gemini API key с <code>aistudio.google.com</code>. Проверю и сохраню. /cancel — отмена."
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "set:input:gigachat_key")
+async def cb_input_gigachat(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(SettingsStates.waiting_gigachat_key)
+    await callback.message.answer(
+        "Введи GigaChat credentials (base64 строка из личного кабинета Sber):"
     )
     await callback.answer()
 
@@ -551,6 +571,26 @@ async def step_gemini_key(message: Message, state: FSMContext) -> None:
         await upsert_api_key(session, owner, "gemini", key)
     await state.clear()
     await message.answer("✅ Gemini key сохранён.")
+
+
+@router.message(SettingsStates.waiting_gigachat_key)
+async def step_gigachat_key(message: Message, state: FSMContext) -> None:
+    key = (message.text or "").strip()
+    if not key:
+        await message.answer("Пустой ключ. Повтори или /cancel.")
+        return
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    if not await GigaChatProvider(key).validate_key():
+        await message.answer("❌ Неверные credentials. Проверь ключ в личном кабинете Sber.")
+        return
+    async with get_session() as session:
+        owner = await get_or_create_user(session, message.from_user.id)
+        await upsert_api_key(session, owner, "gigachat", key)
+    await state.clear()
+    await message.answer("✅ GigaChat подключён.")
 
 
 @router.message(SettingsStates.waiting_digest_time)
