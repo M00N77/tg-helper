@@ -1,4 +1,4 @@
-# TelegramHelper
+﻿# TelegramHelper
 
 Персональный AI-ассистент для Telegram-аккаунта. Состоит из двух частей в одном процессе:
 
@@ -35,6 +35,12 @@
 
 ## Команды
 
+**Основные**
+- `/start` — приветствие, главное меню
+- `/help` — справка
+- `/menu` — главное меню навигации
+- `/cancel` — отменить текущую операцию / FSM
+
 **Аккаунт**
 - `/login` — пошагово: api_id → api_hash → телефон → код → 2FA
 - `/logout` — удалить сохранённую сессию
@@ -54,6 +60,22 @@
 - `/todos` — открытые обещания (мои и мне), кнопки done/cancel
 - `/style <имя>` — пересчитать профиль моего стиля общения с этим контактом
 - `/digest [now|on|off|at HH:MM]` — утренний дайджест
+
+**Канбан (YouGile)**
+- `/kanban` — взаимодействие с доской: задачи, колонки
+- `/kanban_login` — авторизация в YouGile
+- `/kanban_board <id>` — выбрать активную доску
+- `/kanban_analytics` — аналитика: распределение задач, статусы, тренды
+
+**Дашборд и отчёты**
+- `/dashboard` — сводка: горящие обещания, задачи канбан, риски выгорания
+- `/weekly` — недельный отчёт: что сделано, что горит, рекомендации
+- `/burnout` — анализ эмоционального выгорания по исходящим сообщениям
+
+**Команда**
+- `/team` — управление командой: состав, роли
+- `/team invite` — пригласить участника по username
+- `/team members` — список участников команды
 
 **Новости**
 - `/news <тема> [--hours=24]` — разовый дайджест из подписанных каналов
@@ -239,8 +261,15 @@ src/
 │       ├── style_cmd.py     # /style
 │       ├── news_cmd.py      # /news, /news_channels
 │       ├── news_topics.py   # /news_topics
+│       ├── menu.py          # /menu — главное меню
 │       ├── meeting.py       # /meeting + upload-обработка аудио/видео встреч
 │       ├── meeting_listener.py  # заглушка (старый Selenium-подход удалён)
+│       ├── team.py          # /team, /team invite, /team members
+│       ├── kanban.py        # /kanban, /kanban_login, /kanban_board
+│       ├── kanban_analytics.py  # /kanban_analytics
+│       ├── dashboard.py     # /dashboard
+│       ├── weekly.py        # /weekly
+│       ├── burnout.py       # /burnout — анализ выгорания через LLM
 │       └── free_text.py     # AI-агент: текст/голос → intent → действие
 ├── core/
 │   ├── agent.py             # LLM intent router

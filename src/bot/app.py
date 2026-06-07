@@ -14,6 +14,7 @@ from src.bot.handlers import (
     kanban_analytics,
     dashboard,
     weekly,
+    burnout,
     login,
     meeting,
     menu,
@@ -62,6 +63,7 @@ async def run_bot(userbot_manager: UserbotManager) -> None:
     dp.include_router(kanban_analytics.router)
     dp.include_router(dashboard.router)
     dp.include_router(weekly.router)
+    dp.include_router(burnout.router)
     dp.include_router(meeting.router)
     # ВАЖНО: free_text — самым последним, чтобы команды и FSM перехватили текст раньше
     dp.include_router(free_text.router)
