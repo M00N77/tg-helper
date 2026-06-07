@@ -29,6 +29,7 @@ from src.db.repo import (
     get_api_key,
     get_contact,
     get_or_create_user,
+    get_team_by_chat,
     list_news_topics,
     list_open_commitments,
     update_commitment_status,
@@ -140,6 +141,122 @@ def _candidates_keyboard_chat(action: str, candidates):
     return kb.as_markup()
 
 
+async def _exec_kanban_intent(intent: dict, message: Message) -> None:
+    """Исполнитель канбан-интентов (create_task, show_boards, move_task, smalltalk).
+    Читает поля как из плоского JSON-формата (основной AGENT_SYSTEM),
+    так и из вложенного parameters (формат KanbanIntentResponse)."""
+    kind = intent.get("intent")
+    from src.bot.handlers.yougile import YouGileClient
+
+    async with get_session() as session:
+        team = await get_team_by_chat(session, message.chat.id)
+
+    if not team or not team.kanban_token:
+        await message.answer("📊 Сначала подключи канбан-доску через /kanban")
+        return
+
+    client = YouGileClient(team.kanban_token, team.kanban_board_id)
+
+    def _get(key: str, default: str = "") -> str:
+        val = intent.get(key) or intent.get("parameters", {}).get(key) or default
+        return str(val).strip() if val else default
+
+    if kind == "create_task":
+        title = _get("title")
+        if not title:
+            await message.answer("❓ Не понял название задачи. Уточни.")
+            return
+        description = _get("description")
+        column_query = _get("column")
+        try:
+            columns = await client.get_columns()
+        except Exception as e:
+            await message.answer(f"❌ Ошибка при получении колонок: {e}")
+            return
+        if column_query:
+            col = next((c for c in columns if column_query.lower() in c.get("title", "").lower()), None)
+            if not col:
+                names = ", ".join(c.get("title", "?") for c in columns)
+                await message.answer(f"❓ Колонка «{column_query}» не найдена. Доступны: {names}")
+                return
+            column_id = col["id"]
+        else:
+            column_id = columns[0]["id"] if columns else None
+            if not column_id:
+                await message.answer("❌ На доске нет колонок.")
+                return
+        try:
+            await client.create_card(title, description, column_id)
+        except Exception as e:
+            await message.answer(f"❌ Ошибка при создании задачи: {e}")
+            return
+        await message.answer(f"✅ Задача «{title}» создана!")
+
+    elif kind == "show_boards":
+        try:
+            columns = await client.get_columns()
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}")
+            return
+        parts = ["📊 <b>Канбан-доска</b>\n"]
+        for col in columns:
+            try:
+                cards = await client.get_cards_in_column(col["id"], limit=10)
+            except Exception:
+                cards = []
+            col_name = col.get("title", "?")
+            parts.append(f"<b>{col_name}</b> ({len(cards)}):")
+            for card in cards[:10]:
+                parts.append(f"  • {card.get('title', '?')[:40]}")
+            if len(cards) > 10:
+                parts.append(f"  … и {len(cards) - 10} ещё")
+            parts.append("")
+        await message.answer("\n".join(parts)[:4000])
+
+    elif kind == "move_task":
+        task_query = _get("task_title")
+        target_column = _get("target_column")
+        if not task_query or not target_column:
+            await message.answer("❓ Укажи, какую задачу и в какую колонку переместить.")
+            return
+        try:
+            columns = await client.get_columns()
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}")
+            return
+        col = next((c for c in columns if target_column.lower() in c.get("title", "").lower()), None)
+        if not col:
+            names = ", ".join(c.get("title", "?") for c in columns)
+            await message.answer(f"❓ Колонка «{target_column}» не найдена. Доступны: {names}")
+            return
+        card_id = None
+        for c in columns:
+            try:
+                cards = await client.get_cards_in_column(c["id"], limit=50)
+            except Exception:
+                continue
+            card = next(
+                (card for card in cards if task_query.lower() in card.get("title", "").lower()),
+                None,
+            )
+            if card:
+                card_id = card["id"]
+                break
+        if not card_id:
+            await message.answer(f"❓ Не нашёл задачу «{task_query}» на доске.")
+            return
+        try:
+            await client.move_card(card_id, col["id"])
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}")
+            return
+        await message.answer(f"✅ Задача «{task_query}» перемещена в «{target_column}»!")
+
+    elif kind == "smalltalk":
+        reply = _get("reply", "Готов помочь с канбан-доской!")
+        await message.answer(reply)
+
+
 async def _execute_intent(intent, message, state, userbot_manager, *, tz_name: str) -> None:
     kind = intent.get("intent")
     client = userbot_manager.get_client(message.from_user.id)
@@ -149,6 +266,10 @@ async def _execute_intent(intent, message, state, userbot_manager, *, tz_name: s
         owner = await get_or_create_user(session, message.from_user.id)
         provider = await build_provider(session, owner)
         heavy = owner.settings.use_heavy_model
+
+    if kind in ("create_task", "show_boards", "move_task", "smalltalk"):
+        await _exec_kanban_intent(intent, message)
+        return
 
     if kind == "chat":
         reply = sanitize_html(intent.get("reply"))
