@@ -736,7 +736,9 @@ async def cb_kanban_back(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("kanban:tasks:"))
 async def cb_kanban_tasks(callback: CallbackQuery):
-    column_id = callback.data.split(":", 2)[2]
+    parts = callback.data.split(":")
+    column_id = parts[2]
+    page = int(parts[3]) if len(parts) > 3 else 0
     async with get_session() as session:
         team = await get_team_by_chat(session, callback.message.chat.id)
     if not team or not team.kanban_token:
@@ -746,7 +748,10 @@ async def cb_kanban_tasks(callback: CallbackQuery):
     client = YouGileClient(team.kanban_token, team.kanban_board_id)
 
     try:
-        cards = await client.get_cards_in_column(column_id, limit=20)
+        page_size = 10
+        all_cards = await client.get_cards_in_column(column_id, limit=100)
+        cards = all_cards[page * page_size:(page + 1) * page_size]
+        total_pages = (len(all_cards) + page_size - 1) // page_size
         columns = await client.get_columns()
     except Exception as e:
         await callback.message.edit_text(f"❌ Ошибка при получении задач: {e}")
@@ -776,6 +781,13 @@ async def cb_kanban_tasks(callback: CallbackQuery):
             text=f"📋 {title}",
             callback_data=f"kanban:task:{card['id']}"
         ))
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="◀", callback_data=f"kanban:tasks:{column_id}:{page-1}"))
+    if page + 1 < total_pages:
+        nav.append(InlineKeyboardButton(text="▶", callback_data=f"kanban:tasks:{column_id}:{page+1}"))
+    if nav:
+        kb.row(*nav)
     kb.row(InlineKeyboardButton(text="➕ Добавить в эту колонку", callback_data=f"kanban:add_to:{column_id}"))
     kb.row(InlineKeyboardButton(text="◀ Назад к доске", callback_data="kanban:board"))
 
@@ -820,12 +832,15 @@ async def cb_kanban_task(callback: CallbackQuery):
     text += f"\n📂 Колонка: {col_name}"
 
     kb = InlineKeyboardBuilder()
+    for col in columns:
+        if col["id"] == column_id:
+            continue
+        kb.row(InlineKeyboardButton(
+            text=f"➡️ {col.get('title', '?')}",
+            callback_data=f"kanban:move_to:{task_id}:{col['id']}"
+        ))
     kb.row(
         InlineKeyboardButton(text="✏️ Переименовать", callback_data=f"kanban:rename:{task_id}"),
-        InlineKeyboardButton(text="📝 Изменить описание", callback_data=f"kanban:edit_desc:{task_id}"),
-    )
-    kb.row(
-        InlineKeyboardButton(text="➡️ Переместить", callback_data=f"kanban:move:{task_id}"),
         InlineKeyboardButton(text="🗑 Удалить", callback_data=f"kanban:delete:{task_id}"),
     )
     kb.row(InlineKeyboardButton(text="◀ Назад", callback_data=f"kanban:tasks:{column_id}"))
