@@ -27,6 +27,7 @@
 | «Поставь напоминания из чата с Артёмом» | Извлекает обещания и кладёт в /todos |
 | «Включи новости и дайджест в 7, добавь тему AI» | Несколько действий за раз |
 | Голосовое сообщение | Транскрипция → агент → действие |
+| Файл встречи (аудио/видео) | Транскрипция → саммари → задачи на YouGile |
 
 Действия, видимые другим (отправка), всегда подтверждаются inline-кнопкой.
 
@@ -58,6 +59,9 @@
 - `/news <тема> [--hours=24]` — разовый дайджест из подписанных каналов
 - `/news_channels` — пометить каналы-источники
 - `/news_topics` — темы для утренних авто-новостей
+
+**Встречи**
+- `/meeting` — главное меню: отправить запись встречи для транскрипции и создания задач
 
 ---
 
@@ -112,6 +116,7 @@
 - **OpenAI SDK** + **google-genai** — LLM (gpt-5-mini / gpt-5.5, gemini-3-flash / gemini-3.1-pro)
 - **faster-whisper** + OpenAI Whisper API — транскрипция голоса (local / api / hybrid)
 - **pypdf**, **python-docx** — документы
+- **Транскрипция встреч** — upload-based, через transcription_service (без Selenium)
 - **rapidfuzz** — fuzzy-резолвер контактов
 - **cryptography (Fernet)** — шифрование секретов
 
@@ -234,6 +239,8 @@ src/
 │       ├── style_cmd.py     # /style
 │       ├── news_cmd.py      # /news, /news_channels
 │       ├── news_topics.py   # /news_topics
+│       ├── meeting.py       # /meeting + upload-обработка аудио/видео встреч
+│       ├── meeting_listener.py  # заглушка (старый Selenium-подход удалён)
 │       └── free_text.py     # AI-агент: текст/голос → intent → действие
 ├── core/
 │   ├── agent.py             # LLM intent router

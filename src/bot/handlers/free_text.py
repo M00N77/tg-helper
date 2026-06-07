@@ -428,7 +428,8 @@ async def _execute_intent(intent, message, state, userbot_manager, *, tz_name: s
 
     elif kind == "tasks_for_chat":
         items = await extract_and_save_commitments(
-            provider, user_id=owner.id, contact=contact, messages=messages_loaded
+            provider, user_id=owner.id, contact=contact, messages=messages_loaded,
+            chat_id=message.chat.id,
         )
         if not items:
             body = "Явных обязательств не нашёл."
@@ -910,7 +911,8 @@ async def _exec_add_reminders_from_chat(intent, message, userbot_manager) -> Non
         owner = await get_or_create_user(session, message.from_user.id)
         contact = await get_contact(session, owner, target.peer_id)
     items = await extract_and_save_commitments(
-        provider, user_id=owner.id, contact=contact, messages=msgs
+        provider, user_id=owner.id, contact=contact, messages=msgs,
+        chat_id=message.chat.id,
     )
     if not items:
         await message.answer("Явных обещаний в этом чате не нашёл.")

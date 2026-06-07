@@ -65,6 +65,7 @@ All keys and tokens are stored **encrypted** (Fernet).
 | `/news_topics` | Automated digest management |
 | `/kanban_login` | FSM wizard: login → password → auto-auth via YouGile API |
 | `/kanban_board` | List YouGile boards, pick one by number |
+| `/meeting` | Upload meeting recording → transcribe → summarize → create YouGile tasks |
 | `Any text` | **Free-text AI agent** — determines intent and executes |
 
 ---
@@ -95,11 +96,31 @@ Text → LLM → JSON intent → dispatch
 
 Voice messages also work: Whisper → text → same pipeline.
 
+**Meeting recordings** (audio/video files) are handled by `meeting.py` — they bypass the agent and go directly through transcription → LLM summary → YouGile task creation.
+
+---
+
+## 7. Meeting Processing (`meeting.py`)
+
+Upload-based flow — no Selenium or Yandex Telemost integration.
+
+```
+User sends audio/video → download file → transcription_service.transcribe()
+  → LLM extracts summary + tasks → YouGileClient.create_card()
+  → bot shows result
+```
+
+**Commands:**
+- `/meeting` — main menu with instructions
+- `F.audio | F.video | F.voice | F.document` — triggers `handle_meeting_file`
+
+The router is registered **before** `free_text.router` so meeting files are intercepted first.
+
 **Conversation context:** Last 8 turns stored in memory (with 30-minute TTL for last mentioned contact), so the LLM understands "him", "that chat", "her".
 
 ---
 
-## 6. Auto-reply System (`src/userbot/auto_reply.py`)
+## 8. Auto-reply System (`src/userbot/auto_reply.py`)
 
 Works when the owner is offline. Two modes:
 
@@ -110,13 +131,13 @@ Works when the owner is offline. Two modes:
 
 ---
 
-## 7. Message Mirror (`src/userbot/mirror.py`)
+## 9. Message Mirror (`src/userbot/mirror.py`)
 
 Every incoming/outgoing message is copied to `messages` in real time, with contact upsert in `contacts`. Voice messages are saved without transcription (lazy transcription when the chat is analyzed).
 
 ---
 
-## 8. Commitments and Reminders
+## 10. Commitments and Reminders
 
 Extracted via LLM:
 - From `/chat Name → Tasks`, `/catchup`
@@ -127,7 +148,7 @@ Background loop checks deadlines every 5 minutes and sends warnings.
 
 ---
 
-## 9. Vector Search (Qdrant)
+## 11. Vector Search (Qdrant)
 
 Local Qdrant at `data/qdrant/`. Collection `messages`, COSINE distance.
 
@@ -137,7 +158,7 @@ Local Qdrant at `data/qdrant/`. Collection `messages`, COSINE distance.
 
 ---
 
-## 10. Transcription (`src/core/transcription.py`)
+## 12. Transcription (`src/core/transcription.py`)
 
 Three modes:
 
@@ -149,7 +170,7 @@ Cached in `transcription_cache`.
 
 ---
 
-## 11. LLM Providers
+## 13. LLM Providers
 
 | Provider | Light Model | Heavy Model | Embedding |
 |---|---|---|---|
@@ -160,7 +181,7 @@ Switch via `/settings`.
 
 ---
 
-## 12. Digests
+## 14. Digests
 
 **Morning:** Over the last 14 hours — who wrote without a reply, burning deadlines, auto-replies. LLM formats into a structure.
 
@@ -168,13 +189,13 @@ Switch via `/settings`.
 
 ---
 
-## 13. Communication Style (`style_profile`)
+## 15. Communication Style (`style_profile`)
 
 For each contact, the LLM analyzes the last 80 outgoing messages and saves a JSON profile: address (ты/вы), register, length, emoji usage, punctuation, typical phrases. Used by smart auto-reply and draft replies.
 
 ---
 
-## 14. Architectural Patterns
+## 16. Architectural Patterns
 
 ```
 mirror.py → upsert_message()         # real-time
@@ -188,7 +209,7 @@ Keys encrypted with Fernet, replies confirmed via PendingAction
 
 ---
 
-## 15. Kanban Integration (YouGile)
+## 17. Kanban Integration (YouGile)
 
 Fully implemented and connected. Flow:
 
@@ -207,14 +228,13 @@ Fully implemented and connected. Flow:
 
 ---
 
-## 16. Work-in-Progress (Not Connected)
+## 18. Work-in-Progress (Not Connected)
 
-- **Meetings** (Yandex Telemost) — join, record, transcribe, extract tasks
 - **Teams** — multi-user with roles
 
 ---
 
-## 17. Technology Stack
+## 19. Technology Stack
 
 | Component | Technology |
 |---|---|
@@ -226,6 +246,7 @@ Fully implemented and connected. Flow:
 | LLM Providers | OpenAI SDK + google-genai |
 | Vector Store | Qdrant (embedded, local) |
 | Voice Transcription | faster-whisper (local) + OpenAI Whisper API |
+| Meeting Transcription | Upload-based via transcription_service |
 | Document Parsing | pypdf + python-docx |
 | Fuzzy Matching | rapidfuzz |
 | Encryption | cryptography (Fernet) |

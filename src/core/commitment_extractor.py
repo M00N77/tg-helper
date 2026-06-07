@@ -58,6 +58,7 @@ async def extract_and_save_commitments(
     user_id: int,
     contact: Contact,
     messages: list[Message],
+    chat_id: int | None = None,
 ) -> list[dict]:
     if not messages:
         return []
@@ -99,4 +100,24 @@ async def extract_and_save_commitments(
                 deadline_at=_parse_iso(item.get("deadline")),
             )
             saved.append(item)
+            if chat_id and item.get("deadline"):
+                try:
+                    from src.db.repo import get_team_by_chat
+                    from src.bot.handlers.yougile import YouGileClient
+                    async with get_session() as _ks:
+                        team = await get_team_by_chat(_ks, chat_id)
+                    if team and team.kanban_token and team.kanban_board_id:
+                        _client = YouGileClient(team.kanban_token, team.kanban_board_id)
+                        columns = await _client.get_columns()
+                        if columns:
+                            col_id = columns[0]["id"]
+                            await _client.create_card(
+                                title=text,
+                                description=f"Дедлайн: {item.get('deadline')}\nСобеседник: {contact.display_name}",
+                                column_id=col_id,
+                                assignee_ids=[],
+                            )
+                            logger.info("YouGile card created: %s", text)
+                except Exception as _e:
+                    logger.warning("YouGile card creation failed: %s", _e)
     return saved

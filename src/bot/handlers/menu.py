@@ -243,28 +243,28 @@ async def cb_menu_kanban(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer()
         return
 
-    from src.bot.handlers.kanban import _build_board_text
     from src.bot.handlers.yougile import YouGileClient
     client = YouGileClient(team.kanban_token, team.kanban_board_id)
     try:
-        columns = await client.get_columns()
+        boards = await client.get_boards()
     except Exception as e:
-        await callback.message.edit_text(f"❌ Ошибка получения доски: {e}")
+        await callback.message.edit_text(f"❌ Ошибка: {e}")
         await callback.answer()
         return
 
-    text = await _build_board_text(client, "Канбан-доска")
+    if not boards:
+        await callback.message.edit_text("❌ Досок не найдено")
+        await callback.answer()
+        return
 
+    text = breadcrumb("📊 Канбан") + "📊 Выбери доску:"
     kb = InlineKeyboardBuilder()
-    for col in columns:
+    for b in boards:
         kb.row(InlineKeyboardButton(
-            text=f"📋 {col.get('title', '?')}",
-            callback_data=f"kanban:tasks:{col['id']}"
+            text=f"📋 {b.get('title', b['id'])}",
+            callback_data=f"menu:kanban:open:{b['id']}"
         ))
-    kb.row(InlineKeyboardButton(text="🔄 Обновить", callback_data="kanban:board"))
-    kb.row(InlineKeyboardButton(text="➕ Добавить задачу", callback_data="kanban:add"))
     kb.row(InlineKeyboardButton(text="◀ Главное меню", callback_data="menu:back"))
-
     await callback.message.edit_text(text, reply_markup=kb.as_markup())
     await callback.answer()
 
@@ -281,6 +281,32 @@ async def cb_menu_kanban_board(callback: CallbackQuery, state: FSMContext) -> No
     await callback.answer()
     from src.bot.handlers.kanban import cmd_kanban_board
     await cmd_kanban_board(callback.message, state)
+
+
+@router.callback_query(F.data.startswith("menu:kanban:open:"))
+async def cb_menu_kanban_open(callback: CallbackQuery) -> None:
+    board_id = callback.data.split(":", 3)[3]
+    async with get_session() as session:
+        team = await get_team_by_chat(session, callback.message.chat.id)
+    from src.bot.handlers.kanban import build_board_text
+    from src.bot.handlers.yougile import YouGileClient
+    client = YouGileClient(team.kanban_token, board_id)
+    try:
+        columns = await client.get_columns()
+        text = await build_board_text(client, "📊 Доска")
+    except Exception as e:
+        await callback.message.edit_text(f"❌ Ошибка: {e}")
+        await callback.answer()
+        return
+    kb = InlineKeyboardBuilder()
+    for col in columns:
+        kb.row(InlineKeyboardButton(
+            text=f"📋 {col.get('title', '?')}",
+            callback_data=f"kanban:tasks:{col['id']}"
+        ))
+    kb.row(InlineKeyboardButton(text="◀ К доскам", callback_data="menu:kanban"))
+    await callback.message.edit_text(text, reply_markup=kb.as_markup())
+    await callback.answer()
 
 
 # ── menu:news ───────────────────────────────────────────────────────────────

@@ -22,7 +22,7 @@ from src.db.repo import update_team_kanban, get_team_by_chat
 router = Router(name="kanban")
 
 
-async def _build_board_text(client: YouGileClient, board_title: str) -> str:
+async def build_board_text(client: YouGileClient, board_title: str) -> str:
     try:
         columns = await client.get_columns()
     except Exception as e:
@@ -189,7 +189,7 @@ async def cb_kanban_board(callback: CallbackQuery):
         return
 
     client = YouGileClient(team.kanban_token, team.kanban_board_id)
-    text = await _build_board_text(client, "Канбан-доска")
+    text = await build_board_text(client, "Канбан-доска")
 
     kb = InlineKeyboardBuilder()
     try:
@@ -328,7 +328,7 @@ async def process_board(message: Message, state: FSMContext):
         )
 
     client = YouGileClient(token, board["id"])
-    text = await _build_board_text(client, board["title"])
+    text = await build_board_text(client, board["title"])
 
     kb = InlineKeyboardBuilder()
     try:
@@ -501,7 +501,7 @@ async def cb_kanban_sync(callback: CallbackQuery):
     client = YouGileClient(team.kanban_token, team.kanban_board_id)
 
     try:
-        text = await _build_board_text(client, "Канбан-доска")
+        text = await build_board_text(client, "Канбан-доска")
     except Exception as e:
         await callback.message.edit_text(f"❌ Ошибка синхронизации: {e}")
         await callback.answer()
@@ -640,7 +640,7 @@ async def cb_kanban_choose_board(callback: CallbackQuery, state: FSMContext):
         await update_team_kanban(session, callback.message.chat.id, token, board["id"], "yougile")
 
     client = YouGileClient(token, board["id"])
-    text = await _build_board_text(client, board["title"])
+    text = await build_board_text(client, board["title"])
 
     kb = InlineKeyboardBuilder()
     kb.row(
