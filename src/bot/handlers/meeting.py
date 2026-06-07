@@ -29,6 +29,7 @@ MEETING_EXTRACT_SYSTEM = (
     "Верни СТРОГИЙ JSON (без markdown-обёртки):\n"
     '{\n'
     '  "summary": "саммари встречи 3-5 предложений",\n'
+    '  "participants": ["имя1", "имя2"],\n'
     '  "tasks": [\n'
     '    {"title": "название задачи", "assignee": "имя или null", "deadline": "ISO-8601 или null"},\n'
     '    ...\n'
@@ -105,6 +106,7 @@ async def handle_meeting_file(message: Message):
     media = message.audio or message.video or message.voice or message.document
     if media is None:
         return
+    duration_sec = getattr(media, "duration", None) or 0
     if message.document and media.mime_type:
         if not media.mime_type.startswith("audio/") and not media.mime_type.startswith("video/"):
             return
@@ -208,7 +210,18 @@ async def handle_meeting_file(message: Message):
                     except Exception:
                         pass
 
-        lines = [f"📋 <b>Встреча — саммари</b>\n\n{summary}"]
+        duration_str = ""
+        if duration_sec:
+            h = duration_sec // 3600
+            m = (duration_sec % 3600) // 60
+            s = duration_sec % 60
+            if h:
+                duration_str = f"{h}ч {m}мин"
+            elif m:
+                duration_str = f"{m}мин {s}сек"
+            else:
+                duration_str = f"{s}сек"
+        lines = [f"📋 <b>Встреча — саммари</b>" + (f" · ⏱ {duration_str}" if duration_str else "") + f"\n\n{summary}"]
 
         if tasks:
             lines.append(f"\n✅ <b>Задачи ({len(tasks)}):</b>")
@@ -229,6 +242,16 @@ async def handle_meeting_file(message: Message):
             lines.append(f"\n📊 Создано на доске YouGile: <b>{created_count}</b> задач")
         elif tasks and (not team or not team.kanban_token):
             lines.append("\n💡 Подключи YouGile (/kanban) чтобы задачи создавались автоматически.")
+
+        if duration_sec and duration_sec >= 120 and tasks:
+            people = list({t.get("assignee") for t in tasks if t.get("assignee")})
+            per_person = duration_sec // 60
+            lines.append(f"\n⏱ <b>Трудозатраты встречи:</b>")
+            lines.append(f"  Длительность: {duration_str}")
+            if people:
+                lines.append(f"  Участники: {', '.join(people)}")
+                lines.append(f"  ~{per_person} мин/чел (равномерно)")
+            lines.append(f"  Итого: ~{len(people) * per_person if people else per_person} чел·мин")
 
         kb = InlineKeyboardBuilder()
         kb.button(text="📊 Открыть доску", callback_data="meeting:yougile")
