@@ -22,7 +22,11 @@ async def _analyze_sentiment(card_titles: list[str]) -> str:
         async with aiohttp.ClientSession() as s:
             r = await s.post(
                 "https://api.anthropic.com/v1/messages",
-                headers={"Content-Type": "application/json"},
+                headers={
+                    "Content-Type": "application/json",
+                    "x-api-key": __import__('os').environ.get("ANTHROPIC_API_KEY", ""),
+                    "anthropic-version": "2023-06-01",
+                },
                 json={
                     "model": "claude-sonnet-4-20250514",
                     "max_tokens": 100,

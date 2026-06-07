@@ -136,6 +136,11 @@ async def step_kanban_token(message: Message, state: FSMContext):
     data = await state.get_data()
     provider = data["kanban_provider"]
     
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
     parts = message.text.strip().split(":")
     if len(parts) < 2:
         await message.answer(

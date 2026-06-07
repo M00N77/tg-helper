@@ -15,6 +15,9 @@ NOW_MS = lambda: int(time.time() * 1000)
 
 @router.message(Command("dashboard"))
 async def cmd_dashboard(message: Message) -> None:
+    if message.from_user is None:
+        return
+
     wait = await message.answer("⏳ Собираю данные...")
 
     lines = ["📋 <b>Manager Dashboard</b>\n"]
