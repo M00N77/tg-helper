@@ -15,6 +15,36 @@ router.message.filter(OwnerOnly())
 NOW_MS = lambda: int(time.time() * 1000)
 
 
+async def _analyze_sentiment(card_titles: list[str]) -> str:
+    if not card_titles:
+        return "😐 Недостаточно данных"
+    sample = "\n".join(f"- {t}" for t in card_titles[:30])
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as s:
+            r = await s.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={"Content-Type": "application/json"},
+                json={
+                    "model": "claude-sonnet-4-20250514",
+                    "max_tokens": 100,
+                    "messages": [{
+                        "role": "user",
+                        "content": (
+                            f"Оцени общее настроение команды по названиям задач. "
+                            f"Ответь ТОЛЬКО одной строкой: emoji + 2-4 слова (например: '😊 Команда в тонусе' или '😰 Много проблем').\n\n"
+                            f"Задачи:\n{sample}"
+                        )
+                    }]
+                }
+            )
+            data = await r.json()
+            text = data["content"][0]["text"].strip()
+            return text
+    except Exception as e:
+        return f"😐 Анализ недоступен"
+
+
 @router.message(Command("kanban_analytics"))
 async def cmd_kanban_analytics(message: Message) -> None:
     async with get_session() as session:
@@ -83,5 +113,15 @@ async def cmd_kanban_analytics(message: Message) -> None:
             lines.append(f"  • [{col_title}] {title[:50]} — {age_days:.0f} дн.")
     else:
         lines.append("\n✅ Все задачи в норме")
+
+    all_titles = []
+    for col in columns:
+        try:
+            cards = await client.get_cards_in_column(col["id"])
+            all_titles.extend([c.get("title", "") for c in cards if c.get("title")])
+        except Exception:
+            pass
+    sentiment = await _analyze_sentiment(all_titles)
+    lines.append(f"\n🧠 <b>Настроение команды:</b> {sentiment}")
 
     await message.answer("\n".join(lines), parse_mode="HTML")
