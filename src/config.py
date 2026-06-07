@@ -13,8 +13,8 @@ class LLMDefaults:
     OPENAI_CHAT_HEAVY = "gpt-5.5"
     OPENAI_EMBED = "text-embedding-3-small"
 
-    GEMINI_CHAT_LIGHT = "gemini-3-flash"
-    GEMINI_CHAT_HEAVY = "gemini-3.1-pro"
+    GEMINI_CHAT_LIGHT = "gemini-2.5-flash"
+    GEMINI_CHAT_HEAVY = "gemini-3-flash-preview"
     GEMINI_EMBED = "text-embedding-004"
 
 
