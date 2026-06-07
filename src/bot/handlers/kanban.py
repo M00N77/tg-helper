@@ -17,6 +17,7 @@ from src.bot.states import KanbanStates, KanbanAuthStates, KanbanCardStates
 from src.bot.handlers.yougile import YouGileClient
 from src.db.session import get_session
 from src.db.repo import update_team_kanban, get_team_by_chat
+from src.userbot.manager import UserbotManager
 
 
 router = Router(name="kanban")
@@ -87,6 +88,7 @@ async def cb_kanban_setup(callback: CallbackQuery, state: FSMContext):
         InlineKeyboardButton(text="📌 Trello", callback_data="kanban:provider:trello"),
     )
     kb.row(InlineKeyboardButton(text="◀ Назад", callback_data="kanban:back"))
+    kb.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="goto:main:confirm"))
     
     await callback.message.edit_text(
         "🔌 <b>Выберите канбан-доску</b>\n\n"
@@ -375,6 +377,31 @@ async def cb_kanban_add(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+@router.callback_query(F.data == "goto:main:confirm")
+async def cb_goto_main_confirm(callback: CallbackQuery) -> None:
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        InlineKeyboardButton(text="✅ Да, в главное меню", callback_data="goto:main:yes"),
+        InlineKeyboardButton(text="❌ Остаться", callback_data="goto:main:no"),
+    )
+    await callback.message.edit_text(
+        "🏠 Перейти в главное меню?\nТекущий экран закроется.",
+        reply_markup=kb.as_markup()
+    )
+    await callback.answer()
+
+@router.callback_query(F.data == "goto:main:yes")
+async def cb_goto_main_yes(callback: CallbackQuery, userbot_manager: UserbotManager) -> None:
+    from src.bot.handlers.menu import cmd_menu
+    from aiogram.types import Message
+    await callback.answer()
+    await cmd_menu(callback.message, userbot_manager)
+
+@router.callback_query(F.data == "goto:main:no")
+async def cb_goto_main_no(callback: CallbackQuery) -> None:
+    await callback.answer("Остаёмся здесь")
+
+
 @router.message(KanbanCardStates.waiting_title)
 async def process_card_title(message: Message, state: FSMContext):
     if message.text == "❌ Отмена":
@@ -568,6 +595,7 @@ async def cb_kanban_stats(callback: CallbackQuery):
 
     kb = InlineKeyboardBuilder()
     kb.row(InlineKeyboardButton(text="◀ Назад", callback_data="kanban:board"))
+    kb.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="goto:main:confirm"))
 
     await callback.message.edit_text(text, reply_markup=kb.as_markup())
     await callback.answer()
@@ -583,6 +611,7 @@ async def cb_kanban_settings(callback: CallbackQuery):
     kb.row(InlineKeyboardButton(text="🔑 Сменить аккаунт", callback_data="kanban:relogin"))
     kb.row(InlineKeyboardButton(text="❌ Отключить", callback_data="kanban:disconnect"))
     kb.row(InlineKeyboardButton(text="◀ Назад", callback_data="kanban:back_to_menu"))
+    kb.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="goto:main:confirm"))
 
     await callback.message.edit_text(
         "⚙ <b>Настройки канбан</b>\n\nВыбери действие:",
@@ -621,6 +650,7 @@ async def cb_kanban_change_board(callback: CallbackQuery, state: FSMContext):
     for i, b in enumerate(boards):
         kb.row(InlineKeyboardButton(text=b["title"], callback_data=f"kanban:choose:{i}"))
     kb.row(InlineKeyboardButton(text="◀ Назад", callback_data="kanban:settings"))
+    kb.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="goto:main:confirm"))
 
     await state.update_data(boards=boards)
 
@@ -664,6 +694,7 @@ async def cb_kanban_relogin(callback: CallbackQuery):
 
     kb = InlineKeyboardBuilder()
     kb.row(InlineKeyboardButton(text="◀ Назад", callback_data="kanban:back_to_menu"))
+    kb.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="goto:main:confirm"))
 
     await callback.message.edit_text(
         "🔑 Токен сброшен. Используй /kanban_login для повторной авторизации.",
@@ -774,6 +805,7 @@ async def cb_kanban_tasks(callback: CallbackQuery):
         kb = InlineKeyboardBuilder()
         kb.row(InlineKeyboardButton(text="➕ Добавить в эту колонку", callback_data=f"kanban:add_to:{column_id}"))
         kb.row(InlineKeyboardButton(text="◀ Назад к доске", callback_data="kanban:board"))
+        kb.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="goto:main:confirm"))
         await callback.message.edit_text(text, reply_markup=kb.as_markup())
         await callback.answer()
         return
@@ -795,6 +827,7 @@ async def cb_kanban_tasks(callback: CallbackQuery):
         kb.row(*nav)
     kb.row(InlineKeyboardButton(text="➕ Добавить в эту колонку", callback_data=f"kanban:add_to:{column_id}"))
     kb.row(InlineKeyboardButton(text="◀ Назад к доске", callback_data="kanban:board"))
+    kb.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="goto:main:confirm"))
 
     await callback.message.edit_text(text, reply_markup=kb.as_markup())
     await callback.answer()
@@ -849,6 +882,7 @@ async def cb_kanban_task(callback: CallbackQuery):
         InlineKeyboardButton(text="🗑 Удалить", callback_data=f"kanban:delete:{task_id}"),
     )
     kb.row(InlineKeyboardButton(text="◀ Назад", callback_data=f"kanban:tasks:{column_id}"))
+    kb.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="goto:main:confirm"))
 
     await callback.message.edit_text(text, reply_markup=kb.as_markup())
     await callback.answer()
@@ -989,6 +1023,7 @@ async def cb_kanban_move(callback: CallbackQuery):
             callback_data=f"kanban:move_to:{task_id}:{col['id']}"
         ))
     kb.row(InlineKeyboardButton(text="◀ Назад", callback_data=f"kanban:task:{task_id}"))
+    kb.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="goto:main:confirm"))
 
     await callback.message.edit_text("Выбери новую колонку:", reply_markup=kb.as_markup())
     await callback.answer()

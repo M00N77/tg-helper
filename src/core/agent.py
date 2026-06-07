@@ -305,8 +305,8 @@ async def process_free_text(
             return "🔑 Нужен LLM-ключ. Добавь в /settings → 🔑 API-ключи."
         team = await get_team_by_chat(session, chat_id)
 
-    if not team or not team.kanban_token:
-        return "📊 Канбан не подключён. Используй /kanban для настройки."
+    if not team or not team.kanban_token or not team.kanban_board_id:
+        return "⚠️ Доска для задач не выбрана. Пожалуйста, выберите нужную доску в настройках команды, чтобы я мог создавать карточки."
 
     raw = await provider.chat([
         ChatMessage(role="system", content=KANBAN_AGENT_SYSTEM),

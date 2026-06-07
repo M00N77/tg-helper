@@ -99,7 +99,7 @@ async def get_api_key(session: AsyncSession, user: User, provider: str) -> str |
         select(ApiKey).where(ApiKey.user_id == user.id, ApiKey.provider == provider)
     )
     row = result.scalar_one_or_none()
-    return decrypt(row.key_enc) if row is not None else None
+    return decrypt(row.key_enc).strip() if row is not None else None
 
 
 async def upsert_contact(

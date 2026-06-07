@@ -6,8 +6,8 @@ from typing import Dict, List, Optional
 
 class YouGileClient:
     """Клиент для работы с API YouGile"""
-    
-    def __init__(self, api_token: str, board_id: str):
+
+    def __init__(self, api_token: str, board_id: str | None = None):
         self.api_token = api_token
         self.board_id = board_id
         self.base_url = "https://yougile.com/api-v2"
@@ -15,9 +15,14 @@ class YouGileClient:
             "Authorization": f"Bearer {api_token}",
             "Content-Type": "application/json"
         }
-    
+
+    def _require_board(self) -> None:
+        if not self.board_id:
+            raise ValueError("board_id is required for this operation")
+
     async def get_columns(self) -> List[Dict]:
         """Получить список колонок доски"""
+        self._require_board()
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
                 f"{self.base_url}/columns",
@@ -27,7 +32,7 @@ class YouGileClient:
             response.raise_for_status()
             data = response.json()
             return data.get("content", [])
-    
+
     async def create_card(
         self,
         title: str,
@@ -36,6 +41,7 @@ class YouGileClient:
         assignee_ids: Optional[List[str]] = None
     ) -> Dict:
         """Создать карточку задачи"""
+        self._require_board()
         payload = {"title": title, "columnId": column_id}
         if description:
             payload["description"] = description
@@ -53,9 +59,10 @@ class YouGileClient:
                 )
                 raise RuntimeError(f"YouGile POST /tasks вернул {response.status_code}: {body}")
             return response.json()
-    
+
     async def move_card(self, card_id: str, column_id: str) -> Dict:
         """Переместить карточку в другую колонку"""
+        self._require_board()
         payload = {"columnId": column_id}
         logging.warning(f"[YouGile][move_card] PUT /tasks/{card_id} payload={payload}")
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -71,9 +78,10 @@ class YouGileClient:
                 )
                 raise RuntimeError(f"YouGile PUT /tasks/{card_id} вернул {response.status_code}: {body}")
             return response.json()
-    
+
     async def get_cards_in_column(self, column_id: str, limit: int = 50) -> List[Dict]:
         """Получить карточки в колонке"""
+        self._require_board()
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
                 f"{self.base_url}/tasks",
@@ -83,8 +91,9 @@ class YouGileClient:
             response.raise_for_status()
             data = response.json()
             return data.get("content", [])
-    
+
     async def get_boards(self) -> list:
+        """Получить список досок (не требует board_id)"""
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
                 f"{self.base_url}/boards",
@@ -103,6 +112,7 @@ class YouGileClient:
 
     async def update_card(self, card_id: str, **kwargs) -> Dict:
         """Обновить карточку"""
+        self._require_board()
         logging.warning(f"[YouGile][update_card] PUT /tasks/{card_id} payload={kwargs}")
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.put(
@@ -120,6 +130,7 @@ class YouGileClient:
 
     async def get_task(self, task_id: str) -> Dict:
         """Получить данные одной задачи"""
+        self._require_board()
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
                 f"{self.base_url}/tasks/{task_id}",
@@ -130,6 +141,7 @@ class YouGileClient:
 
     async def delete_task(self, task_id: str) -> None:
         """Удалить задачу"""
+        self._require_board()
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.delete(
                 f"{self.base_url}/tasks/{task_id}",

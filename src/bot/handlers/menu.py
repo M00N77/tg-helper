@@ -104,7 +104,7 @@ async def cb_menu_chats(callback: CallbackQuery) -> None:
     kb.row(InlineKeyboardButton(text="✉️ Написать кому-нибудь", callback_data="menu:chats:send"))
     kb.row(InlineKeyboardButton(text="✅ Мои задачи и обещания", callback_data="menu:chats:todos"))
     kb.row(InlineKeyboardButton(text="🔄 Синхронизировать контакты", callback_data="menu:chats:sync"))
-    kb.row(InlineKeyboardButton(text="◀ Главное меню", callback_data="menu:back"))
+    kb.row(InlineKeyboardButton(text="◀ Главное меню", callback_data="goto:main:confirm"))
     await callback.message.edit_text(text, reply_markup=kb.as_markup())
     await callback.answer()
 
@@ -229,7 +229,7 @@ async def cb_menu_kanban(callback: CallbackQuery, state: FSMContext) -> None:
         text = breadcrumb("📊 Канбан") + "📊 Канбан — подключи YouGile чтобы начать"
         kb = InlineKeyboardBuilder()
         kb.row(InlineKeyboardButton(text="🔑 Войти в YouGile", callback_data="menu:kanban:login"))
-        kb.row(InlineKeyboardButton(text="◀ Главное меню", callback_data="menu:back"))
+        kb.row(InlineKeyboardButton(text="◀ Главное меню", callback_data="goto:main:confirm"))
         await callback.message.edit_text(text, reply_markup=kb.as_markup())
         await callback.answer()
         return
@@ -238,7 +238,7 @@ async def cb_menu_kanban(callback: CallbackQuery, state: FSMContext) -> None:
         text = breadcrumb("📊 Канбан") + "📊 Канбан — выбери доску для работы"
         kb = InlineKeyboardBuilder()
         kb.row(InlineKeyboardButton(text="📋 Выбрать доску", callback_data="menu:kanban:board"))
-        kb.row(InlineKeyboardButton(text="◀ Главное меню", callback_data="menu:back"))
+        kb.row(InlineKeyboardButton(text="◀ Главное меню", callback_data="goto:main:confirm"))
         await callback.message.edit_text(text, reply_markup=kb.as_markup())
         await callback.answer()
         return
@@ -264,7 +264,7 @@ async def cb_menu_kanban(callback: CallbackQuery, state: FSMContext) -> None:
             text=f"📋 {b.get('title', b['id'])}",
             callback_data=f"menu:kanban:open:{b['id']}"
         ))
-    kb.row(InlineKeyboardButton(text="◀ Главное меню", callback_data="menu:back"))
+    kb.row(InlineKeyboardButton(text="◀ Главное меню", callback_data="goto:main:confirm"))
     await callback.message.edit_text(text, reply_markup=kb.as_markup())
     await callback.answer()
 
@@ -342,7 +342,7 @@ async def cb_menu_news(callback: CallbackQuery) -> None:
     kb.row(InlineKeyboardButton(text="➕ Добавить тему", callback_data="menu:news:add"))
     kb.row(InlineKeyboardButton(text="📡 Настроить источники", callback_data="menu:news:sources"))
     kb.row(InlineKeyboardButton(text="📨 Дайджест сейчас", callback_data="menu:news:now"))
-    kb.row(InlineKeyboardButton(text="◀ Главное меню", callback_data="menu:back"))
+    kb.row(InlineKeyboardButton(text="◀ Главное меню", callback_data="goto:main:confirm"))
 
     await callback.message.edit_text(text, reply_markup=kb.as_markup())
     await callback.answer()
@@ -419,7 +419,7 @@ async def _send_news_menu(message: Message) -> None:
     kb.row(InlineKeyboardButton(text="➕ Добавить тему", callback_data="menu:news:add"))
     kb.row(InlineKeyboardButton(text="📡 Настроить источники", callback_data="menu:news:sources"))
     kb.row(InlineKeyboardButton(text="📨 Дайджест сейчас", callback_data="menu:news:now"))
-    kb.row(InlineKeyboardButton(text="◀ Главное меню", callback_data="menu:back"))
+    kb.row(InlineKeyboardButton(text="◀ Главное меню", callback_data="goto:main:confirm"))
 
     await message.answer(text, reply_markup=kb.as_markup())
 
@@ -499,4 +499,4 @@ async def cb_menu_settings(callback: CallbackQuery) -> None:
 async def cb_menu_meetings(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     from src.bot.handlers.meeting import cmd_meeting
-    await cmd_meeting(callback.message, state)
+    await cmd_meeting(callback.message)

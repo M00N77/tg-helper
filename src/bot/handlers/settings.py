@@ -456,7 +456,10 @@ async def _render_section(telegram_id: int, section: str) -> tuple[str, InlineKe
 async def cb_input_openai(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(SettingsStates.waiting_openai_key)
     await callback.message.answer(
-        "Пришли OpenAI API key (начинается с <code>sk-</code>). Проверю и сохраню. /cancel — отмена."
+        "🔑 <b>OpenAI API key</b>\n\n"
+        "Пришли ключ (начинается с <code>sk-</code>). Проверю и сохраню.\n\n"
+        "📌 Где взять: <a href=\"https://platform.openai.com/\">platform.openai.com</a>\n\n"
+        "/cancel — отмена."
     )
     await callback.answer()
 
@@ -465,7 +468,10 @@ async def cb_input_openai(callback: CallbackQuery, state: FSMContext) -> None:
 async def cb_input_gemini(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(SettingsStates.waiting_gemini_key)
     await callback.message.answer(
-        "Пришли Gemini API key с <code>aistudio.google.com</code>. Проверю и сохраню. /cancel — отмена."
+        "🔑 <b>Gemini API key</b>\n\n"
+        "Пришли ключ с <code>aistudio.google.com</code>. Проверю и сохраню.\n\n"
+        "📌 Где взять: <a href=\"https://aistudio.google.com/api-keys\">aistudio.google.com/api-keys</a>\n\n"
+        "/cancel — отмена."
     )
     await callback.answer()
 
@@ -474,7 +480,11 @@ async def cb_input_gemini(callback: CallbackQuery, state: FSMContext) -> None:
 async def cb_input_gigachat(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(SettingsStates.waiting_gigachat_key)
     await callback.message.answer(
-        "Введи GigaChat credentials (base64 строка из личного кабинета Sber):"
+        "🔑 <b>GigaChat credentials</b>\n\n"
+        "Нужна base64-строка от <code>client_id:client_secret</code> из личного кабинета Sber.\n"
+        "Пример: <code>echo -n \"client_id:client_secret\" | base64</code>\n\n"
+        "📌 Где взять: <a href=\"https://developers.sber.ru/portal/products/gigachat-api\">developers.sber.ru</a>\n\n"
+        "/cancel — отмена."
     )
     await callback.answer()
 
@@ -544,7 +554,10 @@ async def step_openai_key(message: Message, state: FSMContext) -> None:
     except Exception:
         pass
     if not await OpenAIProvider(key).validate_key():
-        await message.answer("❌ Ключ не работает. Повтори или /cancel.")
+        await message.answer(
+            "❌ Ключ не работает. Повтори или /cancel.\n\n"
+            "📌 Где взять: <a href=\"https://platform.openai.com/\">platform.openai.com</a>"
+        )
         return
     async with get_session() as session:
         owner = await get_or_create_user(session, message.from_user.id)
@@ -564,7 +577,10 @@ async def step_gemini_key(message: Message, state: FSMContext) -> None:
     except Exception:
         pass
     if not await GeminiProvider(key).validate_key():
-        await message.answer("❌ Ключ не работает. Повтори или /cancel.")
+        await message.answer(
+            "❌ Ключ не работает. Повтори или /cancel.\n\n"
+            "📌 Где взять: <a href=\"https://aistudio.google.com/api-keys\">aistudio.google.com/api-keys</a>"
+        )
         return
     async with get_session() as session:
         owner = await get_or_create_user(session, message.from_user.id)
@@ -584,7 +600,13 @@ async def step_gigachat_key(message: Message, state: FSMContext) -> None:
     except Exception:
         pass
     if not await GigaChatProvider(key).validate_key():
-        await message.answer("❌ Неверные credentials. Проверь ключ в личном кабинете Sber.")
+        await message.answer(
+            "❌ Неверные credentials. Проверь:\n"
+            "1️⃣ Корректность base64(client_id:client_secret)\n"
+            "2️⃣ Наличие файла <code>certificates/russian_trusted_root_ca.cer</code>\n"
+            "Повтори или /cancel.\n\n"
+            "📌 Где взять: <a href=\"https://developers.sber.ru/portal/products/gigachat-api\">developers.sber.ru</a>"
+        )
         return
     async with get_session() as session:
         owner = await get_or_create_user(session, message.from_user.id)

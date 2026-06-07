@@ -151,8 +151,8 @@ async def _exec_kanban_intent(intent: dict, message: Message) -> None:
     async with get_session() as session:
         team = await get_team_by_chat(session, message.chat.id)
 
-    if not team or not team.kanban_token:
-        await message.answer("📊 Сначала подключи канбан-доску через /kanban")
+    if not team or not team.kanban_token or not team.kanban_board_id:
+        await message.answer("⚠️ Доска для задач не выбрана. Пожалуйста, выберите нужную доску в настройках команды, чтобы я мог создавать карточки.")
         return
 
     client = YouGileClient(team.kanban_token, team.kanban_board_id)
