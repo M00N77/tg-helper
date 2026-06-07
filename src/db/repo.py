@@ -12,6 +12,7 @@ from src.db.models import (
     AutoReplyLog,
     Commitment,
     Contact,
+    Meeting,
     Message,
     NewsTopic,
     PendingAction,
@@ -516,3 +517,49 @@ async def update_team_kanban(
     await session.commit()
     await session.refresh(team)
     return team
+
+
+async def create_meeting(
+    session: AsyncSession,
+    team_id: int,
+    telemost_url: str,
+) -> Meeting:
+    meeting = Meeting(
+        team_id=team_id,
+        telemost_url=telemost_url,
+        status="active",
+    )
+    session.add(meeting)
+    await session.commit()
+    await session.refresh(meeting)
+    return meeting
+
+
+async def update_meeting_transcript(
+    session: AsyncSession,
+    meeting_id: int,
+    transcript: str,
+    audio_path: str = "",
+) -> Meeting | None:
+    meeting = await session.get(Meeting, meeting_id)
+    if meeting:
+        meeting.transcript = transcript
+        meeting.audio_path = audio_path
+        meeting.status = "transcribed"
+        await session.commit()
+        await session.refresh(meeting)
+    return meeting
+
+
+async def update_meeting_summary(
+    session: AsyncSession,
+    meeting_id: int,
+    summary: str,
+) -> Meeting | None:
+    meeting = await session.get(Meeting, meeting_id)
+    if meeting:
+        meeting.summary = summary
+        meeting.status = "processed"
+        await session.commit()
+        await session.refresh(meeting)
+    return meeting

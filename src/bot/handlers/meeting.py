@@ -6,14 +6,16 @@ from pathlib import Path
 
 from aiogram import Router, F
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton, FSInputFile
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from src.bot.filters import TeamMemberOnly
-from src.core.meeting_listener import MeetingListener
+from src.bot.filters import OwnerOnly
+from src.bot.states import MeetingStates
+from src.bot.handlers.meeting_listener import MeetingListener
 from src.core.transcription import transcription_service
-from src.integrations.yougile import YouGileClient
-from src.db.repo import create_meeting, update_meeting_summary, get_team_by_chat
+from src.bot.handlers.yougile import YouGileClient
+from src.db.repo import create_meeting, update_meeting_transcript, update_meeting_summary, get_team_by_chat
 from src.db.session import get_session
 from src.llm.router import build_provider
 
@@ -25,8 +27,21 @@ active_meetings = {}
 
 
 @router.message(Command("meeting"))
-async def cmd_meeting(message: Message):
+async def cmd_meeting(message: Message, state: FSMContext):
     """Управление встречами"""
+    args = message.text.split()[1:] if message.text else []
+    if args and args[0] == "join":
+        if len(args) > 1:
+            url = " ".join(args[1:])
+            if not url.startswith("http"):
+                url = f"https://telemost.yandex.ru/j/{url}"
+            await _join_meeting_by_url(url, message)
+        else:
+            await state.set_state(MeetingStates.waiting_url)
+            await message.answer(
+                "🔗 Отправь ссылку на Яндекс Телемост:"
+            )
+        return
     kb = InlineKeyboardBuilder()
     kb.row(
         InlineKeyboardButton(text="🎥 Подключиться", callback_data="meeting:join"),
@@ -59,65 +74,57 @@ async def cb_meeting_join(callback: CallbackQuery, state: FSMContext):
         "Или отправьте ID встречи: 1234567890\n\n"
         "Отмена — /cancel"
     )
+    await state.set_state(MeetingStates.waiting_url)
     await callback.answer()
 
 
-@router.message(Command("meeting join"))
-async def cmd_meeting_join(message: Message):
-    """Обработка ссылки на встречу"""
-    args = message.text.split(maxsplit=2)
-    if len(args) < 3:
-        await message.answer(
-            "❌ Укажите ссылку: /meeting join https://telemost.yandex.ru/j/..."
-        )
-        return
-    
-    url = args[2]
-    if not url.startswith("http"):
-        url = f"https://telemost.yandex.ru/j/{url}"
-    
-    team = await get_team_by_chat(message.chat.id)
-    if not team:
-        await message.answer("❌ Сначала создайте команду: /team create")
-        return
-    
-    # Создаём запись о встрече
-    async with get_session() as session:
-        meeting_id = await create_meeting(
-            session,
-            team_id=team.id,
-            telemost_url=url,
-            status="connected"
-        )
-    
-    # Подключаемся
-    listener = MeetingListener(url)
+async def _join_meeting_by_url(url: str, message: Message) -> None:
+    """Подключиться к Яндекс Телемосту по ссылке."""
+    wait_msg = await message.answer("⏳ Подключаюсь к встрече...")
     try:
-        await listener.join_meeting()
+        async with get_session() as session:
+            team = await get_team_by_chat(session, message.chat.id)
+            if not team:
+                await wait_msg.edit_text("❌ Сначала создайте команду: /team create")
+                return
+            meeting = await create_meeting(
+                session, team_id=team.id, telemost_url=url
+            )
+
+        kb = InlineKeyboardBuilder()
+        kb.button(
+            text="🎙 Начать запись",
+            callback_data=f"meeting:record:{meeting.id}"
+        )
+
+        await wait_msg.edit_text(
+            f"✅ Встреча создана (ID: {meeting.id})\n"
+            f"🔗 {url}\n\n"
+            "Нажми кнопку ниже чтобы начать запись:",
+            reply_markup=kb.as_markup()
+        )
     except Exception as e:
-        await message.answer(f"❌ Не удалось подключиться: {e}")
+        await wait_msg.edit_text(f"❌ Ошибка: {e}")
+
+
+@router.message(MeetingStates.waiting_url, F.text)
+async def process_meeting_url(message: Message, state: FSMContext):
+    """Получить ссылку на Яндекс Телемост через FSM"""
+    url = message.text.strip()
+
+    if url.isdigit():
+        url = f"https://telemost.yandex.ru/j/{url}"
+
+    if "telemost.yandex.ru" not in url:
+        await message.answer(
+            "❌ Неверная ссылка. Ожидаю:\n"
+            "https://telemost.yandex.ru/j/1234567890\n\n"
+            "Попробуй ещё раз или /cancel"
+        )
         return
-    
-    active_meetings[message.chat.id] = {
-        "listener": listener,
-        "meeting_id": meeting_id,
-        "url": url
-    }
-    
-    kb = InlineKeyboardBuilder()
-    kb.row(
-        InlineKeyboardButton(text="⏺ Записать", callback_data="meeting:record"),
-        InlineKeyboardButton(text="📝 Обработать", callback_data="meeting:process"),
-        InlineKeyboardButton(text="🚪 Выйти", callback_data="meeting:leave"),
-    )
-    
-    await message.answer(
-        f"✅ <b>Подключено к встрече</b>\n\n"
-        f"🔗 {url}\n"
-        f"🆔 ID встречи: {meeting_id}\n\n"
-        f"Бот слушает обсуждение. Используйте кнопки ниже:",
-        reply_markup=kb.as_markup()
-    )
+
+    await state.clear()
+    await _join_meeting_by_url(url, message)
 
 
 @router.callback_query(F.data == "meeting:record")
@@ -215,16 +222,10 @@ async def cb_meeting_process(callback: CallbackQuery):
     tasks = json.loads(response) if response else []
     
     # Создаём карточки в канбане
-    if team and team.kanban_token:
-        if team.kanban_provider == "yougile":
-            client = YouGileClient(team.kanban_token, team.kanban_board_id)
-        else:
-            from src.integrations.trello import TrelloClient
-            client = TrelloClient(team.kanban_token, team.kanban_board_id)
-        
+    if team and team.kanban_token and team.kanban_provider == "yougile":
+        client = YouGileClient(team.kanban_token, team.kanban_board_id)
         columns = await client.get_columns()
         todo_column = next((c for c in columns if "todo" in c["name"].lower()), columns[0])
-        
         created = []
         for task in tasks:
             card = await client.create_card(
@@ -233,7 +234,7 @@ async def cb_meeting_process(callback: CallbackQuery):
                 column_id=todo_column["id"]
             )
             created.append(card)
-        
+
         await callback.message.answer(
             f"✅ <b>Обработка завершена!</b>\n\n"
             f"📊 Выделено задач: {len(tasks)}\n"

@@ -47,3 +47,7 @@ class MenuStates(StatesGroup):
     waiting_chat_name = State()
     waiting_send_query = State()
     waiting_news_topic = State()
+
+
+class MeetingStates(StatesGroup):
+    waiting_url = State()

@@ -1,15 +1,29 @@
 """Присутствие на встречах: захват звука с Яндекс Телемоста."""
 import asyncio
-import numpy as np
-import sounddevice as sd
-import wave
 import io
+import os
+import wave
 from typing import Optional, Callable
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
+
+import numpy as np
+
+AUDIO_DEVICE = os.getenv("AUDIO_DEVICE", "virtual-audio-capturer")
+
+try:
+    import sounddevice as sd
+    SOUNDDEVICE_AVAILABLE = True
+except ImportError:
+    SOUNDDEVICE_AVAILABLE = False
+
+try:
+    from selenium import webdriver
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.webdriver.chrome.options import Options
+    SELENIUM_AVAILABLE = True
+except ImportError:
+    SELENIUM_AVAILABLE = False
 
 
 class MeetingListener:
@@ -24,6 +38,10 @@ class MeetingListener:
     
     async def join_meeting(self) -> bool:
         """Подключиться к Яндекс Телемосту"""
+        if not SELENIUM_AVAILABLE:
+            raise RuntimeError(
+                "selenium не установлен. Установи: pip install selenium"
+            )
         try:
             # Настройка Chrome для захвата аудио
             chrome_options = Options()
@@ -67,6 +85,10 @@ class MeetingListener:
     
     async def start_recording(self, callback: Callable = None) -> None:
         """Начать запись звука"""
+        if not SOUNDDEVICE_AVAILABLE:
+            raise RuntimeError(
+                "sounddevice не установлен. Установи: pip install sounddevice"
+            )
         self.is_recording = True
         self.audio_callback = callback
         
@@ -79,7 +101,7 @@ class MeetingListener:
             samplerate=16000,
             channels=1,
             callback=audio_callback,
-            device='virtual-audio-capturer'  # может отличаться на разных ОС
+            device=AUDIO_DEVICE,
         )
         self.stream.start()
     
