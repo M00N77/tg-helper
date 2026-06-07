@@ -118,6 +118,14 @@ async def extract_and_save_commitments(
                                 assignee_ids=[],
                             )
                             logger.info("YouGile card created: %s", text)
+                            try:
+                                from aiogram import Bot
+                                from src.core.notifier import notifier
+                                await notifier.notify(
+                                    f"✅ Создал карточку на YouGile: <b>{text}</b>"
+                                )
+                            except Exception:
+                                pass
                 except Exception as _e:
                     logger.warning("YouGile card creation failed: %s", _e)
     return saved

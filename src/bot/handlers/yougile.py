@@ -18,7 +18,7 @@ class YouGileClient:
     
     async def get_columns(self) -> List[Dict]:
         """Получить список колонок доски"""
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
                 f"{self.base_url}/columns",
                 headers=self.headers,
@@ -40,7 +40,7 @@ class YouGileClient:
         if description:
             payload["description"] = description
         logging.warning(f"[YouGile][create_card] payload={payload}")
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{self.base_url}/tasks",
                 headers=self.headers,
@@ -58,7 +58,7 @@ class YouGileClient:
         """Переместить карточку в другую колонку"""
         payload = {"columnId": column_id}
         logging.warning(f"[YouGile][move_card] PUT /tasks/{card_id} payload={payload}")
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.put(
                 f"{self.base_url}/tasks/{card_id}",
                 headers=self.headers,
@@ -74,7 +74,7 @@ class YouGileClient:
     
     async def get_cards_in_column(self, column_id: str, limit: int = 50) -> List[Dict]:
         """Получить карточки в колонке"""
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
                 f"{self.base_url}/tasks",
                 headers=self.headers,
@@ -85,7 +85,7 @@ class YouGileClient:
             return data.get("content", [])
     
     async def get_boards(self) -> list:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
                 f"{self.base_url}/boards",
                 headers=self.headers
@@ -104,7 +104,7 @@ class YouGileClient:
     async def update_card(self, card_id: str, **kwargs) -> Dict:
         """Обновить карточку"""
         logging.warning(f"[YouGile][update_card] PUT /tasks/{card_id} payload={kwargs}")
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.put(
                 f"{self.base_url}/tasks/{card_id}",
                 headers=self.headers,
@@ -120,7 +120,7 @@ class YouGileClient:
 
     async def get_task(self, task_id: str) -> Dict:
         """Получить данные одной задачи"""
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
                 f"{self.base_url}/tasks/{task_id}",
                 headers=self.headers,
@@ -130,7 +130,7 @@ class YouGileClient:
 
     async def delete_task(self, task_id: str) -> None:
         """Удалить задачу"""
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.delete(
                 f"{self.base_url}/tasks/{task_id}",
                 headers=self.headers,
@@ -144,7 +144,7 @@ class YouGileClient:
     async def generate_token(
         self, login: str, password: str, company_name: str
     ) -> str:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 f"{self.base_url}/auth/companies",
                 json={"login": login, "password": password}

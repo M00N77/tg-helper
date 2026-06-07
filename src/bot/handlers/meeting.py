@@ -125,122 +125,123 @@ async def handle_meeting_file(message: Message):
 
     target = media_dir / f"meeting_{message.message_id}{suffix}"
 
-    notice = await message.answer("⏳ Получаю файл…")
     try:
-        await message.bot.download(media.file_id, destination=str(target))
-    except Exception as e:
-        await notice.edit_text(f"❌ Не удалось скачать файл: {e}")
-        return
-
-    async with get_session() as session:
-        owner = await get_or_create_user(session, message.from_user.id)
-        mode = owner.settings.transcription_mode
-        openai_key = await get_api_key(session, owner, "openai")
-
-    await notice.edit_text("🎙 Транскрибирую запись встречи…")
-    try:
-        transcript = await transcription_service.transcribe(
-            target,
-            file_id=str(message.message_id),
-            mode=mode,
-            openai_key=openai_key,
-            language="ru",
-        )
-    except Exception as e:
-        await notice.edit_text(f"❌ Ошибка транскрипции: {e}")
-        return
-
-    if not transcript or not transcript.strip():
-        await notice.edit_text("❌ Не удалось распознать речь в файле.")
-        return
-
-    async with get_session() as session:
-        owner = await get_or_create_user(session, message.from_user.id)
-        provider = await build_provider(session, owner)
-
-    if provider is None:
-        await notice.edit_text(
-            f"✅ Транскрипция готова:\n\n{transcript[:1000]}…\n\n"
-            "⚠️ Добавь LLM-ключ в /settings чтобы извлечь задачи."
-        )
-        return
-
-    await notice.edit_text("🤖 Анализирую встречу…")
-    try:
-        raw = await provider.chat(
-            [
-                ChatMessage(role="system", content=MEETING_EXTRACT_SYSTEM),
-                ChatMessage(role="user", content=f"Транскрипция:\n\n{transcript[:8000]}"),
-            ],
-            heavy=True,
-        )
-        data = json.loads(raw.strip().strip("```").lstrip("json").strip())
-        summary = data.get("summary", "")
-        tasks = data.get("tasks", [])
-    except Exception as e:
-        await notice.edit_text(
-            f"✅ Транскрипция готова, но разбор не удался: {e}\n\n"
-            f"{transcript[:800]}"
-        )
-        return
-
-    async with get_session() as session:
-        team = await get_team_by_chat(session, message.chat.id)
-
-    created_count = 0
-    if team and team.kanban_token and team.kanban_board_id and tasks:
-        client = YouGileClient(team.kanban_token, team.kanban_board_id)
+        notice = await message.answer("⏳ Получаю файл…")
         try:
-            columns = await client.get_columns()
-            first_col_id = columns[0]["id"] if columns else None
+            await message.bot.download(media.file_id, destination=str(target))
+        except Exception as e:
+            await notice.edit_text(f"❌ Не удалось скачать файл: {e}")
+            return
+
+        async with get_session() as session:
+            owner = await get_or_create_user(session, message.from_user.id)
+            mode = owner.settings.transcription_mode
+            openai_key = await get_api_key(session, owner, "openai")
+
+        await notice.edit_text("🎙 Транскрибирую запись встречи…")
+        try:
+            transcript = await transcription_service.transcribe(
+                target,
+                file_id=str(message.message_id),
+                mode=mode,
+                openai_key=openai_key,
+                language="ru",
+            )
+        except Exception as e:
+            await notice.edit_text(f"❌ Ошибка транскрипции: {e}")
+            return
+
+        if not transcript or not transcript.strip():
+            await notice.edit_text("❌ Не удалось распознать речь в файле.")
+            return
+
+        async with get_session() as session:
+            owner = await get_or_create_user(session, message.from_user.id)
+            provider = await build_provider(session, owner)
+
+        if provider is None:
+            await notice.edit_text(
+                f"✅ Транскрипция готова:\n\n{transcript[:1000]}…\n\n"
+                "⚠️ Добавь LLM-ключ в /settings чтобы извлечь задачи."
+            )
+            return
+
+        await notice.edit_text("🤖 Анализирую встречу…")
+        try:
+            raw = await provider.chat(
+                [
+                    ChatMessage(role="system", content=MEETING_EXTRACT_SYSTEM),
+                    ChatMessage(role="user", content=f"Транскрипция:\n\n{transcript[:8000]}"),
+                ],
+                heavy=True,
+            )
+            data = json.loads(raw.strip().strip("```").lstrip("json").strip())
+            summary = data.get("summary", "")
+            tasks = data.get("tasks", [])
+        except Exception as e:
+            await notice.edit_text(
+                f"✅ Транскрипция готова, но разбор не удался: {e}\n\n"
+                f"{transcript[:800]}"
+            )
+            return
+
+        async with get_session() as session:
+            team = await get_team_by_chat(session, message.chat.id)
+
+        created_count = 0
+        if team and team.kanban_token and team.kanban_board_id and tasks:
+            client = YouGileClient(team.kanban_token, team.kanban_board_id)
+            try:
+                columns = await client.get_columns()
+                first_col_id = columns[0]["id"] if columns else None
+            except Exception:
+                first_col_id = None
+
+            if first_col_id:
+                for task in tasks[:10]:
+                    title = (task.get("title") or "").strip()
+                    if not title:
+                        continue
+                    try:
+                        await client.create_card(title, "", first_col_id)
+                        created_count += 1
+                    except Exception:
+                        pass
+
+        lines = [f"📋 <b>Встреча — саммари</b>\n\n{summary}"]
+
+        if tasks:
+            lines.append(f"\n✅ <b>Задачи ({len(tasks)}):</b>")
+            for t in tasks[:10]:
+                title = t.get("title", "?")
+                assignee = t.get("assignee")
+                deadline = t.get("deadline")
+                tail = ""
+                if assignee:
+                    tail += f" · {assignee}"
+                if deadline:
+                    tail += f" · {deadline[:10]}"
+                lines.append(f"  • {title}{tail}")
+        else:
+            lines.append("\nЗадач не выявлено.")
+
+        if created_count > 0:
+            lines.append(f"\n📊 Создано на доске YouGile: <b>{created_count}</b> задач")
+        elif tasks and (not team or not team.kanban_token):
+            lines.append("\n💡 Подключи YouGile (/kanban) чтобы задачи создавались автоматически.")
+
+        kb = InlineKeyboardBuilder()
+        kb.button(text="📊 Открыть доску", callback_data="meeting:yougile")
+        await notice.edit_text(
+            "\n".join(lines)[:4000],
+            parse_mode="HTML",
+            reply_markup=kb.as_markup()
+        )
+    finally:
+        try:
+            target.unlink(missing_ok=True)
         except Exception:
-            first_col_id = None
-
-        if first_col_id:
-            for task in tasks[:10]:
-                title = (task.get("title") or "").strip()
-                if not title:
-                    continue
-                try:
-                    await client.create_card(title, "", first_col_id)
-                    created_count += 1
-                except Exception:
-                    pass
-
-    lines = [f"📋 <b>Встреча — саммари</b>\n\n{summary}"]
-
-    if tasks:
-        lines.append(f"\n✅ <b>Задачи ({len(tasks)}):</b>")
-        for t in tasks[:10]:
-            title = t.get("title", "?")
-            assignee = t.get("assignee")
-            deadline = t.get("deadline")
-            tail = ""
-            if assignee:
-                tail += f" · {assignee}"
-            if deadline:
-                tail += f" · {deadline[:10]}"
-            lines.append(f"  • {title}{tail}")
-    else:
-        lines.append("\nЗадач не выявлено.")
-
-    if created_count > 0:
-        lines.append(f"\n📊 Создано на доске YouGile: <b>{created_count}</b> задач")
-    elif tasks and (not team or not team.kanban_token):
-        lines.append("\n💡 Подключи YouGile (/kanban) чтобы задачи создавались автоматически.")
-
-    kb = InlineKeyboardBuilder()
-    kb.button(text="📊 Открыть доску", callback_data="meeting:yougile")
-    await notice.edit_text(
-        "\n".join(lines)[:4000],
-        parse_mode="HTML",
-        reply_markup=kb.as_markup()
-    )
-
-    try:
-        target.unlink(missing_ok=True)
-    except Exception:
-        pass
+            pass
 
 
 from src.bot.handlers.kanban import build_board_text

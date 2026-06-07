@@ -252,6 +252,42 @@ async def _exec_kanban_intent(intent: dict, message: Message) -> None:
             return
         await message.answer(f"✅ Задача «{task_query}» перемещена в «{target_column}»!")
 
+    elif kind == "update_kanban_card":
+        task_query = _get("task_title")
+        target_column = _get("target_column")
+        if not task_query or not target_column:
+            await message.answer("❓ Укажи задачу и статус (колонку).")
+            return
+        try:
+            columns = await client.get_columns()
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}")
+            return
+        col = next((c for c in columns if target_column.lower() in c.get("title", "").lower()), None)
+        if not col:
+            names = ", ".join(c.get("title", "?") for c in columns)
+            await message.answer(f"❓ Колонка «{target_column}» не найдена. Доступны: {names}")
+            return
+        card_id = None
+        for c in columns:
+            try:
+                cards = await client.get_cards_in_column(c["id"], limit=50)
+            except Exception:
+                continue
+            card = next((card for card in cards if task_query.lower() in card.get("title", "").lower()), None)
+            if card:
+                card_id = card["id"]
+                break
+        if not card_id:
+            await message.answer(f"❓ Не нашёл задачу «{task_query}».")
+            return
+        try:
+            await client.move_card(card_id, col["id"])
+        except Exception as e:
+            await message.answer(f"❌ Ошибка: {e}")
+            return
+        await message.answer(f"✅ «{task_query}» → <b>{col.get('title')}</b>")
+
     elif kind == "smalltalk":
         reply = _get("reply", "Готов помочь с канбан-доской!")
         await message.answer(reply)
@@ -267,7 +303,7 @@ async def _execute_intent(intent, message, state, userbot_manager, *, tz_name: s
         provider = await build_provider(session, owner)
         heavy = owner.settings.use_heavy_model
 
-    if kind in ("create_task", "show_boards", "move_task", "smalltalk"):
+    if kind in ("create_task", "show_boards", "move_task", "update_kanban_card", "smalltalk"):
         await _exec_kanban_intent(intent, message)
         return
 
