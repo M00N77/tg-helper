@@ -9,6 +9,7 @@ from src.bot.handlers import (
     catchup_cmd,
     chat_cmd,
     digest_cmd,
+    digest_evening_cmd,
     free_text,
     kanban,
     kanban_analytics,
@@ -56,6 +57,7 @@ async def run_bot(userbot_manager: UserbotManager) -> None:
     dp.include_router(search.router)
     dp.include_router(todos.router)
     dp.include_router(digest_cmd.router)
+    dp.include_router(digest_evening_cmd.router)
     dp.include_router(style_cmd.router)
     dp.include_router(news_cmd.router)
     dp.include_router(news_topics.router)

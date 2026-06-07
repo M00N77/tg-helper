@@ -21,8 +21,11 @@ async def session():
     engine = create_async_engine(settings.database_url, future=True, pool_size=1, max_overflow=0)
     async_session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with async_session_factory() as s:
-        async with s.begin():
+        await s.begin()
+        try:
             yield s
+        finally:
+            await s.rollback()
     await engine.dispose()
 
 
