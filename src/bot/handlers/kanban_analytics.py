@@ -4,13 +4,11 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
-from src.bot.filters import OwnerOnly
 from src.bot.handlers.yougile import YouGileClient
 from src.db.repo import get_team_by_chat
 from src.db.session import get_session
 
 router = Router(name="kanban_analytics")
-router.message.filter(OwnerOnly())
 
 NOW_MS = lambda: int(time.time() * 1000)
 
