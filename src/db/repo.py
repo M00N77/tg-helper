@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import select, text as sql_text
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.crypto import decrypt, encrypt
@@ -202,7 +202,7 @@ async def upsert_message(
     media_path: str | None = None,
     extracted_text: str | None = None,
 ) -> None:
-    stmt = sqlite_insert(Message).values(
+    stmt = pg_insert(Message).values(
         user_id=user_id,
         peer_id=peer_id,
         message_id=message_id,
