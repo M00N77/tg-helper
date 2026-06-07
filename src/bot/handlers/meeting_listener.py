@@ -36,53 +36,112 @@ class MeetingListener:
         self.audio_callback: Optional[Callable] = None
         self.stream: Optional[sd.InputStream] = None
     
-    async def join_meeting(self) -> bool:
-        """Подключиться к Яндекс Телемосту"""
+    async def join_meeting(
+        self, display_name: str = "Бот-ассистент"
+    ) -> bool:
         if not SELENIUM_AVAILABLE:
             raise RuntimeError(
                 "selenium не установлен. Установи: pip install selenium"
             )
         try:
-            # Настройка Chrome для захвата аудио
             chrome_options = Options()
-            chrome_options.add_argument('--use-fake-ui-for-media-stream')
-            chrome_options.add_argument('--auto-select-desktop-capture-source=Tab')
-            chrome_options.add_argument('--disable-web-security')
-            chrome_options.add_argument('--allow-running-insecure-content')
-            chrome_options.add_argument('--disable-blink-features=AutomationControlled')
-            
-            # Headless режим для сервера
-            # chrome_options.add_argument('--headless')
-            
+            chrome_options.add_argument("--use-fake-ui-for-media-stream")
+            chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+            chrome_options.add_experimental_option(
+                "excludeSwitches", ["enable-automation"]
+            )
+
             self.driver = webdriver.Chrome(options=chrome_options)
             self.driver.get(self.url)
-            
-            # Ждём загрузки страницы
+            await asyncio.sleep(4)
+
+            # ШАГ 1 — "Продолжить в браузере"
+            clicked = self.driver.execute_script("""
+                const btn = document.querySelector(
+                    '[class*="continueInBrowserButton"]'
+                );
+                if (btn) { btn.click(); return true; }
+                return false;
+            """)
+            if not clicked:
+                print("Кнопка 'Продолжить в браузере' не найдена")
+            await asyncio.sleep(3)
+
+            # ШАГ 2 — Вводим имя
+            self.driver.execute_script("""
+                const input = document.querySelector(
+                    '[data-testid="orb-textinput-input"]'
+                );
+                if (input) {
+                    const nativeInput = Object.getOwnPropertyDescriptor(
+                        window.HTMLInputElement.prototype, 'value'
+                    ).set;
+                    nativeInput.call(input, arguments[0]);
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+            """, display_name)
+            await asyncio.sleep(1)
+
+            # ШАГ 3 — "Подключиться"
+            self.driver.execute_script("""
+                const btn = document.querySelector(
+                    '[data-testid="enter-conference-button"]'
+                );
+                if (btn) btn.click();
+            """)
             await asyncio.sleep(5)
-            
-            # Ищем и нажимаем кнопку "Подключиться"
-            try:
-                join_button = WebDriverWait(self.driver, 10).until(
-                    EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'Подключиться')]"))
-                )
-                join_button.click()
-                await asyncio.sleep(2)
-            except Exception:
-                pass
-            
-            # Включаем микрофон, если нужно
-            try:
-                mic_button = self.driver.find_element(By.XPATH, "//button[contains(@aria-label, 'Микрофон')]")
-                mic_button.click()
-            except Exception:
-                pass
-            
+
             return True
-            
+
         except Exception as e:
             print(f"Ошибка подключения к встрече: {e}")
             return False
-    
+
+    async def start_recording_via_ui(self) -> bool:
+        """Запустить запись через меню Телемоста"""
+        try:
+            await asyncio.sleep(3)
+
+            # ШАГ 4 — Кнопка "Ещё" (три точки)
+            self.driver.execute_script("""
+                const btn = document.querySelector(
+                    '[data-testid="more-popup-alt-button"]'
+                );
+                if (btn) btn.click();
+            """)
+            await asyncio.sleep(2)
+
+            # ШАГ 5 — "Записать на компьютер"
+            clicked = self.driver.execute_script("""
+                const option = document.querySelector(
+                    '[title="Записать на компьютер"]'
+                );
+                if (option) { option.click(); return true; }
+                return false;
+            """)
+            await asyncio.sleep(2)
+            return bool(clicked)
+
+        except Exception as e:
+            print(f"Ошибка запуска записи через UI: {e}")
+            return False
+
+    async def stop_recording_via_ui(self) -> bool:
+        """Остановить запись через UI Телемоста"""
+        try:
+            clicked = self.driver.execute_script("""
+                const btn = document.querySelector(
+                    '[class*="stopButtonContent"]'
+                )?.closest('button');
+                if (btn) { btn.click(); return true; }
+                return false;
+            """)
+            await asyncio.sleep(3)
+            return bool(clicked)
+        except Exception as e:
+            print(f"Ошибка остановки записи: {e}")
+            return False
+
     async def start_recording(self, callback: Callable = None) -> None:
         """Начать запись звука"""
         if not SOUNDDEVICE_AVAILABLE:

@@ -4,6 +4,7 @@ from src.db.models import User
 from src.db.repo import get_api_key
 from src.llm.base import LLMProvider
 from src.llm.gemini_provider import GeminiProvider
+from src.llm.gigachat_provider import GigaChatProvider
 from src.llm.openai_provider import OpenAIProvider
 
 
@@ -17,4 +18,6 @@ async def build_provider(session: AsyncSession, user: User) -> LLMProvider | Non
         return OpenAIProvider(key)
     if provider_name == "gemini":
         return GeminiProvider(key)
+    if provider_name == "gigachat":
+        return GigaChatProvider(key)
     return None

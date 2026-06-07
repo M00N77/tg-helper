@@ -64,7 +64,7 @@ SETTING_FIELDS: dict[str, str] = {
     "reminder_overdue_enabled":   "bool",
     "ignore_archived":            "bool",
     "use_heavy_model":            "bool",
-    "llm_provider":               "choice:openai,gemini",
+    "llm_provider":               "choice:openai,gemini,gigachat",
     "transcription_mode":         "choice:local,api,hybrid",
     "timezone":                   "tz",
 }

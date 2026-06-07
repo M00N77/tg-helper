@@ -1,6 +1,8 @@
 """Присутствие на встречах: Яндекс Телемост, распознавание речи, извлечение задач."""
 import asyncio
+import glob
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -175,6 +177,168 @@ async def cb_meeting_record(callback: CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("meeting:record:"))
+async def cb_meeting_record_by_id(callback: CallbackQuery):
+    """Начать запись встречи через UI Телемоста и скачать файл."""
+    meeting_id = int(callback.data.split(":")[2])
+    wait_msg = await callback.message.answer(
+        "🎙 Подключаюсь к встрече и начинаю запись..."
+    )
+    await callback.answer()
+
+    async with get_session() as session:
+        from src.db.models import Meeting
+        meeting = await session.get(Meeting, meeting_id)
+        if not meeting:
+            await wait_msg.edit_text("❌ Встреча не найдена в БД")
+            return
+
+    listener = MeetingListener(meeting.telemost_url)
+    joined = await listener.join_meeting()
+
+    if not joined:
+        await wait_msg.edit_text(
+            "❌ Не удалось подключиться к Телемосту."
+        )
+        return
+
+    # Запускаем запись через UI
+    await wait_msg.edit_text("⏺ Запускаю запись через Телемост...")
+    recording_started = await listener.start_recording_via_ui()
+
+    if not recording_started:
+        await wait_msg.edit_text(
+            "❌ Не удалось найти кнопку записи в Телемосте.\n"
+            "Возможно интерфейс изменился."
+        )
+        return
+
+    duration = 300
+    await wait_msg.edit_text(
+        f"🔴 Идёт запись встречи ({duration // 60} мин)...\n"
+        "Бот сидит на встрече и пишет разговор."
+    )
+    await asyncio.sleep(duration)
+
+    # Останавливаем запись
+    await listener.stop_recording_via_ui()
+    await wait_msg.edit_text(
+        "✅ Запись остановлена.\n"
+        "⏳ Файл скачивается в папку загрузок браузера...\n"
+        "Подожди 10 секунд."
+    )
+    await asyncio.sleep(10)
+
+    # Ищем последний скачанный файл
+    downloads = sorted(
+        glob.glob(
+            str(Path.home() / "Downloads" / "*.webm")
+        ) + glob.glob(
+            str(Path.home() / "Downloads" / "*.mp4")
+        ),
+        key=lambda f: Path(f).stat().st_mtime,
+        reverse=True
+    )
+
+    if not downloads:
+        await wait_msg.edit_text(
+            "⚠️ Файл записи не найден в папке Downloads.\n"
+            "Попробуй скачать вручную и отправь боту."
+        )
+        return
+
+    audio_path = Path(downloads[0])
+    async with get_session() as session:
+        await update_meeting_transcript(
+            session, meeting_id, "", str(audio_path)
+        )
+
+    await listener.leave_meeting()
+
+    kb = InlineKeyboardBuilder()
+    kb.button(
+        text="📝 Расшифровать и извлечь задачи",
+        callback_data=f"meeting:transcribe:{meeting_id}"
+    )
+    await wait_msg.edit_text(
+        f"✅ Запись готова: {audio_path.name}\n"
+        f"📁 {audio_path}\n\n"
+        "Нажми чтобы расшифровать и создать задачи в YouGile:",
+        reply_markup=kb.as_markup()
+    )
+
+
+@router.callback_query(F.data.startswith("meeting:process:"))
+async def cb_meeting_process_by_id(callback: CallbackQuery):
+    """Извлечь задачи из расшифровки встречи по ID."""
+    meeting_id = int(callback.data.split(":")[2])
+    wait_msg = await callback.message.answer("🔄 Анализирую встречу...")
+    await callback.answer()
+
+    async with get_session() as session:
+        from src.db.models import Meeting
+        meeting = await session.get(Meeting, meeting_id)
+        if not meeting or not meeting.transcript:
+            await wait_msg.edit_text(
+                "❌ Нет расшифровки. Сначала запиши встречу."
+            )
+            return
+
+        team = await get_team_by_chat(session, callback.message.chat.id)
+        if not team:
+            await wait_msg.edit_text("❌ Команда не найдена")
+            return
+
+    async with get_session() as session:
+        from src.db.repo import get_or_create_user
+        owner = await get_or_create_user(session, callback.from_user.id)
+        provider = await build_provider(session, owner)
+
+    from src.llm.base import ChatMessage
+    prompt = (
+        "Из расшифровки встречи выдели все задачи и договорённости. "
+        "Верни ТОЛЬКО JSON массив без пояснений:\n"
+        '[{"title":"...","description":"...","assignee":"...","deadline":"..."}]\n\n'
+        f"Расшифровка:\n{meeting.transcript[:3000]}"
+    )
+    response = await provider.chat(
+        [ChatMessage(role="user", content=prompt)]
+    )
+
+    try:
+        json_match = re.search(r'\[.*\]', response, re.DOTALL)
+        tasks = json.loads(json_match.group()) if json_match else []
+    except Exception:
+        tasks = []
+
+    if not tasks:
+        await wait_msg.edit_text("🤷 Задач не найдено в расшифровке")
+        return
+
+    created = []
+    if team.kanban_token and team.kanban_board_id:
+        client = YouGileClient(team.kanban_token, team.kanban_board_id)
+        columns = await client.get_columns()
+        if columns:
+            first_col = columns[0]
+            for task in tasks:
+                card = await client.create_card(
+                    title=task.get("title", "Задача"),
+                    description=task.get("description", ""),
+                    column_id=first_col["id"],
+                )
+                created.append(card)
+
+    async with get_session() as session:
+        await update_meeting_summary(session, meeting_id, response[:2000])
+    await wait_msg.edit_text(
+        f"✅ Готово!\n\n"
+        f"📋 Найдено задач: {len(tasks)}\n"
+        f"🎯 Создано в канбане: {len(created)}\n\n"
+        + "\n".join(f"• {t.get('title','?')}" for t in tasks[:10])
+    )
+
+
 @router.callback_query(F.data == "meeting:process")
 async def cb_meeting_process(callback: CallbackQuery):
     """Обработка встречи: извлечение задач и создание карточек"""
@@ -248,3 +412,48 @@ async def cb_meeting_process(callback: CallbackQuery):
         )
     
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("meeting:transcribe:"))
+async def cb_meeting_transcribe(callback: CallbackQuery):
+    """Расшифровать запись встречи."""
+    meeting_id = int(callback.data.split(":")[2])
+    wait_msg = await callback.message.answer("🔄 Расшифровываю запись...")
+    await callback.answer()
+
+    async with get_session() as session:
+        from src.db.models import Meeting
+        meeting = await session.get(Meeting, meeting_id)
+        if not meeting or not meeting.audio_path:
+            await wait_msg.edit_text("❌ Файл записи не найден")
+            return
+
+        audio_path = Path(meeting.audio_path)
+        if not audio_path.exists():
+            await wait_msg.edit_text(
+                f"❌ Файл не найден: {audio_path}\n"
+                "Возможно был перемещён или удалён."
+            )
+            return
+
+        try:
+            transcript = await transcription_service.transcribe(
+                audio_path, mode="api", language="ru"
+            )
+            await update_meeting_transcript(
+                session, meeting_id, transcript, str(audio_path)
+            )
+
+            kb = InlineKeyboardBuilder()
+            kb.button(
+                text="🎯 Извлечь задачи в YouGile",
+                callback_data=f"meeting:process:{meeting_id}"
+            )
+            await wait_msg.edit_text(
+                f"✅ Расшифровка готова!\n\n"
+                f"📝 Первые 500 символов:\n{transcript[:500]}...\n\n"
+                "Создать задачи в YouGile?",
+                reply_markup=kb.as_markup()
+            )
+        except Exception as e:
+            await wait_msg.edit_text(f"❌ Ошибка расшифровки: {e}")

@@ -524,6 +524,18 @@ async def create_meeting(
     team_id: int,
     telemost_url: str,
 ) -> Meeting:
+    # Ищем активную встречу с таким же URL
+    result = await session.execute(
+        select(Meeting).where(
+            Meeting.team_id == team_id,
+            Meeting.telemost_url == telemost_url,
+            Meeting.status.in_(["active", "recording"]),
+        )
+    )
+    existing = result.scalar_one_or_none()
+    if existing:
+        return existing  # возвращаем существующую
+
     meeting = Meeting(
         team_id=team_id,
         telemost_url=telemost_url,

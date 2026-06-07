@@ -21,5 +21,12 @@ python-docx>=1.1
 # Векторный поиск
 qdrant-client>=1.12
 
+# Браузерный доступ (Яндекс Телемост)
+selenium>=4.20
+sounddevice>=0.5
+
 # Fuzzy matching контактов
 rapidfuzz>=3.10
+
+# GigaChat (третий LLM-провайдер)
+gigachat>=0.1.28

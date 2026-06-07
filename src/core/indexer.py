@@ -51,6 +51,8 @@ async def index_chat(
                 continue
             try:
                 vec = await provider.embed(text)
+            except NotImplementedError:
+                raise
             except Exception:
                 logger.exception("embed failed for message %s", m.id)
                 continue

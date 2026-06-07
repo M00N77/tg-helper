@@ -12,6 +12,7 @@ class LoginStates(StatesGroup):
 class SettingsStates(StatesGroup):
     waiting_openai_key = State()
     waiting_gemini_key = State()
+    waiting_gigachat_key = State()
     waiting_digest_time = State()
     waiting_news_time = State()
     waiting_lead_hours = State()
