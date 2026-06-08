@@ -260,7 +260,9 @@ async def handle_meeting_file(message: Message):
                     if not title:
                         continue
                     try:
-                        card = await client.create_card(title, "", first_col_id)
+                        deadline_raw = task.get("deadline") or ""
+                        deadline = deadline_raw[:10] if deadline_raw else None
+                        card = await client.create_card(title, "", first_col_id, deadline=deadline)
                         created_tasks.append(card.get("title", title))
                         created_count += 1
                     except Exception:
