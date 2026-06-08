@@ -5,21 +5,30 @@
 - **Userbot** (Telethon) — подключается к твоему аккаунту через MTProto. Зеркалит все входящие/исходящие сообщения в локальную БД, авто-отвечает оффлайн, отправляет сообщения от твоего имени.
 - **Control Bot** (aiogram) — Telegram-бот, через который ты управляешь userbot'ом. Понимает команды и **свободный текст или голос** через LLM-агента.
 
-Только владелец (`OWNER_TELEGRAM_ID`) может пользоваться. Сессия Telethon, API-ключи и api_hash хранятся в локальной SQLite, зашифрованы Fernet.
+Поддерживает командную работу: в групповых чатах участники команды получают доступ к канбану, встречам и дайджестам.
 
 ---
 
-## 🚀 Ключевые возможности
+## Ключевые возможности
 
-- 📊 **Канбан-интеграция** — авто-создание задач на YouGile из переписки и встреч
-- 🎥 **Обработка встреч** — транскрипция аудио/видео → саммари → задачи + трудозатраты
+### Индивидуальные
+- 🤖 **Свободный текст и голос** — агент понимает обычный язык и голосовые
 - 🧠 **Анализ выгорания** — LLM анализирует исходящие сообщения, даёт рекомендации
 - 📈 **Аналитика рисков** — флаги задач которые висят дольше нормы
 - 📋 **Dashboard** — сводка горящих обещаний, задач и рисков одной командой
 - 📅 **Недельный отчёт** — что сделано, что горит, статистика по доске
-- 🤖 **Свободный текст и голос** — агент понимает обычный язык и голосовые
+- 🌙 **Вечерний дайджест** — задачи на завтра из обязательств и YouGile
+- 📰 **Новости** — авто-дайджест по подписанным каналам и темам
+- ⏰ **Напоминания** — пинги о дедлайнах с настраиваемым lead-time
 
----      
+### Командные
+- 👥 **Управление командой** — создание, приглашение по @username, роли (admin/member)
+- 📊 **Канбан-интеграция** (YouGile) — авто-создание задач из переписки и встреч
+- 🎥 **Встречи** — создание комнат (Jitsi / МТС Линк), транскрипция аудио/видео → саммари → задачи
+- 🔄 **Invite-проверка** — новый участник пишет в группу → автоматическое добавление в команду
+- 🏢 **Командный дайджест** — обязательства и канбан для всей команды
+
+---
 
 ## Фишка: пишешь как человеку
 
@@ -71,7 +80,13 @@
 **Память**
 - `/todos` — открытые обещания (мои и мне), кнопки done/cancel
 - `/style <имя>` — пересчитать профиль моего стиля общения с этим контактом
-- `/digest [now|on|off|at HH:MM]` — утренний дайджест
+- `/digest [now\|on\|off\|at HH:MM]` — утренний дайджест
+- `/test_evening_digest` — ручной запуск вечернего дайджеста
+
+**Команда**
+- `/team` — управление командой (создать, пригласить, участники, настройки)
+- `/team invite` — пригласить участника по @username
+- `/team members` — список участников команды
 
 **Канбан (YouGile)**
 - `/kanban` — взаимодействие с доской: задачи, колонки
@@ -82,7 +97,6 @@
 - `/weekly` — недельный отчёт по задачам и встречам
 - `/burnout` — анализ эмоционального состояния по переписке
 
-
 **Новости**
 - `/news <тема> [--hours=24]` — разовый дайджест из подписанных каналов
 - `/news_channels` — пометить каналы-источники
@@ -90,6 +104,7 @@
 
 **Встречи**
 - `/meeting` — главное меню: отправить запись встречи для транскрипции и создания задач
+- `/meeting join` — создать комнату встречи (Jitsi / МТС Линк)
 
 ---
 
@@ -100,14 +115,16 @@
 │  Control Bot (aiogram)                           │
 │  команды, FSM, inline-меню,                      │
 │  free-text + голос → агент                       │
+│  фильтры: OwnerOnly / OwnerOrTeamMember          │
 └────────────┬─────────────────────────────────────┘
              │
 ┌────────────▼─────────────────────────────────────┐
 │  Core                                            │
 │  • Agent (LLM intent router)                     │
-│  • LLM router (OpenAI ↔ Gemini)                  │
+│  • LLM router (OpenAI ↔ Gemini ↔ Groq ↔ GigaChat)│
 │  • ChatService, Summarizer, Style profile        │
 │  • Commitments, Reminders, Digest, News          │
+│  • Evening digest                                │
 │  • Conversation context (краткая память)         │
 └────────────┬───────────────────────┬─────────────┘
              │ MTProto                │ embeddings/LLM
@@ -116,12 +133,13 @@
 │ • Auth с 2FA         │     │ • SQLite + FTS5   │
 │ • NewMessage mirror  │     │ • Qdrant embedded │
 │ • UpdateFolderPeers  │     │ • Fernet secrets  │
-│ • Auto-reply offline │     │                   │
+│ • Auto-reply offline │     │ • Alembic         │
 └──────────────────────┘     └───────────────────┘
 ```
 
 **Фоновые задачи** в одном event loop:
 - `digest-scheduler` — утренний дайджест в выбранное время по TZ владельца
+- `evening-digest` — вечерний дайджест (задачи на завтра) в 20:00
 - `news-scheduler` — авто-дайджест по темам-фаворитам
 - `reminders-loop` — пинги о приближении/просрочке дедлайнов
 - `auto-sync` — раз в час обновляет контакты и архивный статус
@@ -129,6 +147,8 @@
 **Real-time mirror.** Каждое входящее и исходящее сообщение в любом чате тут же пишется в `messages` таблицу. SQLite FTS5-индекс синхронизируется триггерами — поиск работает локально за миллисекунды (не через Telegram API).
 
 **Lazy-транскрипция.** Голосовые при mirror'инге сохраняются без транскрипта — она запускается в момент анализа конкретного чата (faster-whisper локально или OpenAI Whisper API, по настройке).
+
+**Invite-проверка.** Middleware на каждом сообщении из группы проверяет `pending_invites` — если пользователь приглашён, он автоматически добавляется в `team_members`.
 
 **Prefetch при `/sync`.** Один раз для топ-N активных чатов подтягиваются последние ~50 сообщений в БД — заполняет холодный кэш. После этого mirror поддерживает свежесть.
 
@@ -140,11 +160,15 @@
 - **aiogram 3.x** — control bot
 - **Telethon 1.36+** — userbot (MTProto)
 - **SQLAlchemy 2** + **aiosqlite** + **SQLite FTS5** — БД и полнотекстовый поиск
+- **Alembic** — миграции схемы БД
 - **Qdrant** (embedded) — векторный поиск
-- **OpenAI SDK** + **google-genai** — LLM (gpt-5-mini / gpt-5.5, gemini-3-flash / gemini-3.1-pro)
+- **OpenAI SDK** + **google-genai** — LLM (gpt-5-mini / gpt-5.5, gemini-2.5-flash / gemini-3-flash-preview)
+- **Groq SDK** — дополнительный LLM-провайдер (llama-4)
+- **GigaChat SDK** — дополнительный LLM-провайдер
 - **faster-whisper** + OpenAI Whisper API — транскрипция голоса (local / api / hybrid)
 - **pypdf**, **python-docx** — документы
-- **Транскрипция встреч** — upload-based, через transcription_service (без Selenium)
+- **Транскрипция встреч** — upload-based, через transcription_service
+- **Создание комнат** — Jitsi (бесплатно) / МТС Линк (по API-токену)
 - **rapidfuzz** — fuzzy-резолвер контактов
 - **cryptography (Fernet)** — шифрование секретов
 
@@ -205,7 +229,7 @@ docker compose logs -f assistant
    - телефон в формате `+71234567890`
    - код из Telegram — **с пробелами между цифрами** (`1 2 3 4 5`), иначе Telegram автоматически инвалидирует код, увидев его открыто в чате
    - 2FA-пароль, если включён (сообщение с паролем удаляется сразу после успеха)
-3. `/settings → 🔑 API-ключи` — OpenAI или Gemini key (проверится перед сохранением)
+3. `/settings → 🔑 API-ключи` — OpenAI, Gemini, Groq или GigaChat ключ (проверится перед сохранением)
 4. `/settings → 🌍 Часовой пояс` — пресет или произвольный IANA
 5. `/sync` — подтянуть контакты + фоновый prefetch сообщений
 
@@ -223,7 +247,7 @@ docker compose logs -f assistant
 - **⏰ Напоминания** — пинги о дедлайнах. Lead 1/2/4/12/24 ч; алерт при просрочке.
 - **📰 Новости** — авто-дайджест по темам из `/news_topics`.
 - **🛡 Приватность** — игнорировать архив (по умолчанию ВКЛ): архивные чаты не подгружаются никуда.
-- **🤖 LLM** — переключение OpenAI ↔ Gemini, лёгкая ↔ тяжёлая модель.
+- **🤖 LLM** — переключение OpenAI ↔ Gemini ↔ Groq ↔ GigaChat, лёгкая ↔ тяжёлая модель.
 - **🎤 Транскрипция** — `local` / `api` / `hybrid`.
 - **🔑 API-ключи** — хранятся зашифрованными.
 
@@ -233,7 +257,7 @@ docker compose logs -f assistant
 
 ## Безопасность и приватность
 
-- Только `OWNER_TELEGRAM_ID` проходит фильтр `OwnerOnly` на каждом роутере.
+- Владелец (`OWNER_TELEGRAM_ID`) и участники команды проходят фильтры `OwnerOnly` / `OwnerOrTeamMember`.
 - Шифрование Fernet для session-string, api_hash, всех LLM-ключей. Ключ из `ENCRYPTION_KEY` не попадает в БД.
 - Сообщения с 2FA-паролем и API-ключами удаляются из чата сразу после успеха.
 - `.env` и `data/` исключены из git.
@@ -251,9 +275,11 @@ src/
 ├── config.py                # pydantic-settings + LLMDefaults
 ├── crypto.py                # Fernet
 ├── bot/
-│   ├── app.py               # регистрация роутеров (free_text — последним)
-│   ├── filters.py           # OwnerOnly
-│   ├── states.py            # FSM-states
+│   ├── app.py               # регистрация роутеров, middleware
+│   ├── filters.py           # OwnerOnly, OwnerOrTeamMember, TeamAccessByChat
+│   ├── states.py            # FSM-states (Login, Kanban, Team, Meeting, …)
+│   ├── middlewares/
+│   │   └── invite_check.py  # InviteCheckMiddleware — авто-добавление в команду
 │   └── handlers/
 │       ├── start.py         # /start, /help
 │       ├── login.py         # /login (FSM с 2FA), /logout, /cancel
@@ -264,18 +290,19 @@ src/
 │       ├── search.py        # /search, /index
 │       ├── todos.py         # /todos
 │       ├── digest_cmd.py    # /digest
+│       ├── digest_evening_cmd.py  # /test_evening_digest
 │       ├── style_cmd.py     # /style
 │       ├── news_cmd.py      # /news, /news_channels
 │       ├── news_topics.py   # /news_topics
 │       ├── menu.py          # /menu — главное меню
-│       ├── meeting.py       # /meeting + upload-обработка аудио/видео встреч
-│       ├── meeting_listener.py  # заглушка (старый Selenium-подход удалён)
-│       ├── team.py          # /team, /team invite, /team members
+│       ├── team.py          # /team — управление командой
+│       ├── meeting.py       # /meeting — транскрипция встреч, создание задач
 │       ├── kanban.py        # /kanban, /kanban_login, /kanban_board
 │       ├── kanban_analytics.py  # /kanban_analytics
 │       ├── dashboard.py     # /dashboard
 │       ├── weekly.py        # /weekly
 │       ├── burnout.py       # /burnout — анализ выгорания через LLM
+│       ├── yougile.py       # YouGileClient (API-клиент)
 │       └── free_text.py     # AI-агент: текст/голос → intent → действие
 ├── core/
 │   ├── agent.py             # LLM intent router
@@ -290,6 +317,7 @@ src/
 │   ├── style_profile.py     # JSON-профиль стиля per-контакт
 │   ├── commitment_extractor.py  # извлечение обещаний
 │   ├── digest.py            # утренний дайджест + scheduler
+│   ├── evening_digest.py    # вечерний дайджест + scheduler
 │   ├── news.py              # дайджест по каналам + scheduler
 │   ├── reminders.py         # пинги о дедлайнах
 │   ├── auto_sync.py         # фоновый re-sync контактов раз в час
@@ -297,6 +325,8 @@ src/
 │   ├── text_sanitizer.py    # привод HTML к Telegram-whitelist
 │   ├── vector_store.py      # Qdrant embedded
 │   └── indexer.py           # batch индексация → embeddings
+├── services/
+│   └── meeting_room.py      # Jitsi / МТС Линк — создание комнат встреч
 ├── userbot/
 │   ├── manager.py           # UserbotManager + pending login
 │   ├── dialogs.py           # sync_dialogs, prefetch_recent_messages
@@ -305,13 +335,16 @@ src/
 │   └── mirror.py            # Real-time mirror всех сообщений в БД и FTS5
 ├── llm/
 │   ├── base.py              # ChatMessage + Protocol
-│   ├── openai_provider.py
-│   ├── gemini_provider.py
+│   ├── openai_provider.py   # OpenAI
+│   ├── gemini_provider.py   # Google Gemini
+│   ├── groq_provider.py     # Groq (llama-4)
+│   ├── gigachat_provider.py # GigaChat (Сбер)
 │   └── router.py            # build_provider по UserSettings
 └── db/
     ├── models.py            # User, Settings, Session, ApiKey, Contact, Message,
     │                        # Commitment, AutoReplyLog, IndexJob, TranscriptionCache,
-    │                        # PendingAction, NewsTopic
+    │                        # PendingAction, NewsTopic, Team, TeamMember,
+    │                        # PendingInvite, Meeting, MeetingTask
     ├── session.py           # async engine + init_db (включая FTS5 schema)
     └── repo.py              # CRUD с (де)шифрованием на границе + fts_search
 ```
@@ -322,8 +355,7 @@ src/
 
 - **Telegram ToS**: userbot с авто-ответом — серая зона. По умолчанию авто-ответ выключен и шлёт нейтральный заготовленный текст с кулдауном между ответами.
 - **Один инстанс**: Qdrant embedded держит lock на `data/qdrant/` — параллельно бот не запустишь.
-- **Мультипользовательность**: фильтр `OwnerOnly` по умолчанию ограничивает доступ одним владельцем; для командной работы отключается в конфиге.
-- **Миграций нет**: при изменении моделей удали `data/app.db` (или подключи Alembic).
+- **Однопользовательский по умолчанию**: через `ALLOWED_TELEGRAM_IDS` можно добавить других; командный режим — через /team.
 
 ---
 
@@ -341,6 +373,9 @@ docker compose down
 rm -f data/app.db data/app.db-journal data/app.db-shm data/app.db-wal
 docker compose up -d
 
+# миграции (если менялись модели)
+alembic upgrade head
+
 # смена версий моделей: src/config.py → LLMDefaults
 ```
 
@@ -349,6 +384,3 @@ docker compose up -d
 ## Лицензия
 
 MIT.
-#   t g - h e l p e r 
- 
- 
