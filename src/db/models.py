@@ -223,13 +223,31 @@ class Team(Base):
     __tablename__ = "teams"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(128), default="")
     chat_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
+    owner_telegram_id: Mapped[int] = mapped_column(BigInteger, default=0)
     kanban_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     kanban_board_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     kanban_provider: Mapped[str | None] = mapped_column(Text, nullable=True, default="yougile")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     meetings: Mapped[list["Meeting"]] = relationship(back_populates="team")
+    members: Mapped[list["TeamMember"]] = relationship(
+        back_populates="team", cascade="all, delete-orphan",
+    )
+
+
+class TeamMember(Base):
+    __tablename__ = "team_members"
+    __table_args__ = (UniqueConstraint("team_id", "telegram_id", name="uq_team_member"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    role: Mapped[str] = mapped_column(String(32), default="member")
+    joined_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    team: Mapped[Team] = relationship(back_populates="members")
 
 
 class Meeting(Base):

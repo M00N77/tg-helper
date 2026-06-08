@@ -17,6 +17,7 @@ from src.db.models import (
     NewsTopic,
     PendingAction,
     Team,
+    TeamMember,
     TelegramSession,
     TranscriptionCache,
     User,
@@ -491,6 +492,23 @@ async def toggle_news_topic(session: AsyncSession, user: User, topic_id: int) ->
     return nt.enabled
 
 
+async def create_team(
+    session: AsyncSession,
+    *,
+    name: str,
+    telegram_chat_id: int,
+    owner_telegram_id: int,
+) -> Team:
+    team = Team(
+        name=name,
+        chat_id=telegram_chat_id,
+        owner_telegram_id=owner_telegram_id,
+    )
+    session.add(team)
+    await session.flush()
+    return team
+
+
 async def get_team_by_chat(
     session: AsyncSession, chat_id: int
 ) -> Team | None:
@@ -498,6 +516,56 @@ async def get_team_by_chat(
         select(Team).where(Team.chat_id == chat_id)
     )
     return result.scalar_one_or_none()
+
+
+async def add_team_member(
+    session: AsyncSession,
+    team_id: int,
+    telegram_id: int,
+    role: str = "member",
+) -> TeamMember:
+    member = TeamMember(team_id=team_id, telegram_id=telegram_id, role=role)
+    session.add(member)
+    await session.flush()
+    return member
+
+
+async def get_team_members(
+    session: AsyncSession,
+    team_id: int,
+) -> list[TeamMember]:
+    result = await session.execute(
+        select(TeamMember).where(TeamMember.team_id == team_id)
+    )
+    return list(result.scalars().all())
+
+
+async def remove_team_member(
+    session: AsyncSession,
+    team_id: int,
+    telegram_id: int,
+) -> bool:
+    result = await session.execute(
+        select(TeamMember).where(
+            TeamMember.team_id == team_id,
+            TeamMember.telegram_id == telegram_id,
+        )
+    )
+    member = result.scalar_one_or_none()
+    if member is None:
+        return False
+    await session.delete(member)
+    return True
+
+
+async def get_user_teams(
+    session: AsyncSession,
+    telegram_id: int,
+) -> list[Team]:
+    result = await session.execute(
+        select(Team).join(TeamMember).where(TeamMember.telegram_id == telegram_id)
+    )
+    return list(result.scalars().all())
 
 
 async def update_team_kanban(
