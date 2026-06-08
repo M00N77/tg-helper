@@ -16,6 +16,7 @@ from src.db.models import (
     Message,
     NewsTopic,
     PendingAction,
+    PendingInvite,
     Team,
     TeamMember,
     TelegramSession,
@@ -645,3 +646,43 @@ async def update_meeting_summary(
         await session.commit()
         await session.refresh(meeting)
     return meeting
+
+
+async def create_pending_invite(
+    session: AsyncSession,
+    team_id: int,
+    username: str,
+    invited_by: int,
+) -> PendingInvite:
+    username = username.lstrip("@").lower()
+    invite = PendingInvite(
+        team_id=team_id,
+        username=username,
+        invited_by=invited_by,
+    )
+    session.add(invite)
+    await session.flush()
+    return invite
+
+
+async def get_pending_invite(
+    session: AsyncSession,
+    username: str,
+) -> PendingInvite | None:
+    username = username.lstrip("@").lower()
+    result = await session.execute(
+        select(PendingInvite).where(PendingInvite.username == username)
+    )
+    return result.scalar_one_or_none()
+
+
+async def delete_pending_invite(
+    session: AsyncSession,
+    invite_id: int,
+) -> None:
+    result = await session.execute(
+        select(PendingInvite).where(PendingInvite.id == invite_id)
+    )
+    invite = result.scalar_one_or_none()
+    if invite:
+        await session.delete(invite)

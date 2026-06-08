@@ -1,6 +1,6 @@
 """Управление командой: создание, приглашение участников, роли."""
 from aiogram import Router, F
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -9,7 +9,7 @@ from src.bot.filters import OwnerOrTeamMember
 from src.bot.states import TeamStates
 from src.db.models import Team
 from src.db.repo import (
-    create_team, add_team_member, get_team_by_chat,
+    create_pending_invite, create_team, add_team_member, get_team_by_chat,
     get_team_members, remove_team_member, get_user_teams,
 )
 from src.db.session import get_session
@@ -21,8 +21,38 @@ router.callback_query.filter(OwnerOrTeamMember())
 
 
 @router.message(Command("team"))
-async def cmd_team(message: Message):
-    """Главное меню управления командой"""
+async def cmd_team(message: Message, state: FSMContext, command: CommandObject):
+    args = (command.args or "").strip().lower()
+
+    if args == "invite":
+        async with get_session() as session:
+            team = await get_team_by_chat(session, message.chat.id)
+        if not team:
+            await message.answer("❌ Это не командный чат. Сначала /team → Создать.")
+            return
+        await state.update_data(team_id=team.id)
+        await state.set_state(TeamStates.waiting_invite_username)
+        await message.answer(
+            f"👥 Введите @username для приглашения в «{team.name}».\nОтмена — /cancel"
+        )
+        return
+
+    if args == "members":
+        async with get_session() as session:
+            team = await get_team_by_chat(session, message.chat.id)
+            if not team:
+                await message.answer("❌ Команда не найдена.")
+                return
+            members = await get_team_members(session, team.id)
+        text = f"👥 <b>Участники «{team.name}»</b>\n\n"
+        for m in members:
+            icon = "👑" if m.role == "admin" else "👤"
+            text += f"{icon} {m.telegram_id} — {m.role}\n"
+        text += f"\nВсего: {len(members)}"
+        await message.answer(text)
+        return
+
+    # Основное меню (без args)
     async with get_session() as session:
         team = await get_team_by_chat(session, message.chat.id)
 
@@ -43,17 +73,9 @@ async def cmd_team(message: Message):
         )
     await message.answer(
         "🏢 <b>Управление командой</b>\n\n"
-        "Здесь вы можете:\n"
-        "• Создать новую команду\n"
-        "• Пригласить участников\n"
-        "• Настроить роли и права\n"
-        "• Подключить канбан-доску\n\n"
-        "Команда — это группа людей, для которых бот будет:\n"
-        "✅ Отслеживать задачи из чата\n"
-        "✅ Напоминать о дедлайнах\n"
-        "✅ Участвовать в встречах\n"
-        "✅ Вести канбан-доску",
-        reply_markup=kb.as_markup()
+        "• /team invite — пригласить участника\n"
+        "• /team members — список участников",
+        reply_markup=kb.as_markup(),
     )
 
 
@@ -143,9 +165,10 @@ async def step_chat_id(message: Message, state: FSMContext):
 
 @router.message(TeamStates.waiting_invite_username)
 async def step_invite(message: Message, state: FSMContext):
-    username = message.text.strip()
-    if not username.startswith("@"):
-        username = f"@{username}"
+    username = message.text.strip().lstrip("@").lower()
+    if not username:
+        await message.answer("❌ Введите @username. Отмена — /cancel")
+        return
 
     data = await state.get_data()
     team_id = data.get("team_id")
@@ -155,6 +178,12 @@ async def step_invite(message: Message, state: FSMContext):
         team = await session.get(Team, team_id)
         if team:
             team_name = team.name
+            await create_pending_invite(
+                session,
+                team_id=team_id,
+                username=username,
+                invited_by=message.from_user.id,
+            )
 
     await state.clear()
 
@@ -163,8 +192,8 @@ async def step_invite(message: Message, state: FSMContext):
         return
 
     await message.answer(
-        f"✅ Пользователь {username} приглашён в команду «{team_name}».\n"
-        f"Когда он напишет боту /start в личке — он будет добавлен автоматически."
+        f"✅ Приглашение для @{username} сохранено.\n"
+        f"Когда он напишет боту /start — автоматически попадёт в «{team_name}»."
     )
 
 

@@ -4,11 +4,13 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
+from src.bot.filters import OwnerOrTeamMember
 from src.bot.handlers.yougile import YouGileClient
 from src.db.repo import get_team_by_chat, get_or_create_user, list_open_commitments
 from src.db.session import get_session
 
 router = Router(name="weekly")
+router.message.filter(OwnerOrTeamMember())
 
 WEEK_MS = 7 * 24 * 3600 * 1000
 

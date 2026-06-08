@@ -3,6 +3,8 @@ import json
 import logging
 from pathlib import Path
 
+from src.bot.filters import OwnerOrTeamMember
+
 
 def detect_platform(url: str) -> str:
     """Определить платформу видеоконференции по URL встречи."""
@@ -25,7 +27,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardButton
 
-from src.bot.filters import OwnerOnly
+
 from src.core.transcription import transcription_service
 from src.db.repo import (
     create_meeting,
@@ -45,7 +47,7 @@ from src.config import settings as app_settings
 logger = logging.getLogger(__name__)
 
 router = Router(name="meeting")
-router.message.filter(OwnerOnly())
+router.message.filter(OwnerOrTeamMember())
 
 MEETING_EXTRACT_SYSTEM = (
     "Ты анализируешь транскрипцию встречи.\n"
