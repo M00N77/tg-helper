@@ -4,11 +4,13 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
+from src.bot.filters import OwnerOrTeamMember
 from src.bot.handlers.yougile import YouGileClient
 from src.db.repo import get_team_by_chat, list_open_commitments, get_or_create_user
 from src.db.session import get_session
 
 router = Router(name="dashboard")
+router.message.filter(OwnerOrTeamMember())
 
 NOW_MS = lambda: int(time.time() * 1000)
 

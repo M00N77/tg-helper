@@ -31,6 +31,7 @@ from src.bot.handlers import (
 )
 from src.config import settings
 from src.core.notifier import notifier
+from src.bot.middlewares.invite_check import InviteCheckMiddleware
 from src.userbot.manager import UserbotManager
 
 
@@ -45,6 +46,7 @@ async def run_bot(userbot_manager: UserbotManager) -> None:
     notifier.attach(bot)
 
     dp = Dispatcher(storage=MemoryStorage())
+    dp.message.outer_middleware(InviteCheckMiddleware())
 
     dp["userbot_manager"] = userbot_manager
 

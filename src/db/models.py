@@ -250,6 +250,21 @@ class TeamMember(Base):
     team: Mapped[Team] = relationship(back_populates="members")
 
 
+class PendingInvite(Base):
+    __tablename__ = "pending_invites"
+    __table_args__ = (
+        UniqueConstraint("team_id", "username", name="uq_pending_invite"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(
+        ForeignKey("teams.id", ondelete="CASCADE"), index=True
+    )
+    username: Mapped[str] = mapped_column(String(64))
+    invited_by: Mapped[int] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class Meeting(Base):
     """Запись встречи (платформонезависимая)."""
 
