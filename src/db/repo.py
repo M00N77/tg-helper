@@ -522,13 +522,14 @@ async def update_team_kanban(
 async def create_meeting(
     session: AsyncSession,
     team_id: int,
-    telemost_url: str,
+    meeting_url: str,
+    platform: str = "unknown",
 ) -> Meeting:
     # Ищем активную встречу с таким же URL
     result = await session.execute(
         select(Meeting).where(
             Meeting.team_id == team_id,
-            Meeting.telemost_url == telemost_url,
+            Meeting.meeting_url == meeting_url,
             Meeting.status.in_(["active", "recording"]),
         )
     )
@@ -538,7 +539,8 @@ async def create_meeting(
 
     meeting = Meeting(
         team_id=team_id,
-        telemost_url=telemost_url,
+        meeting_url=meeting_url,
+        platform=platform,
         status="active",
     )
     session.add(meeting)

@@ -139,47 +139,6 @@ class TeamMember(Base):
     team: Mapped[Team] = relationship(back_populates="members")
 
 
-# ========== ВСТРЕЧИ (НОВОЕ ДЛЯ КЕЙСА) ==========
-
-class Meeting(Base):
-    """Запись встречи (Яндекс Телемост и другие)"""
-    __tablename__ = "meetings"
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
-    telemost_url: Mapped[str] = mapped_column(Text)
-    summary: Mapped[str] = mapped_column(Text, nullable=True)
-    transcript: Mapped[str] = mapped_column(Text, nullable=True)
-    audio_path: Mapped[str] = mapped_column(String(512), nullable=True)
-    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    ended_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
-    status: Mapped[str] = mapped_column(String(32), default="recording")  # recording, processed, failed
-    
-    # Связи
-    team: Mapped[Team] = relationship(back_populates="meetings")
-    extracted_tasks: Mapped[list["MeetingTask"]] = relationship(
-        back_populates="meeting", cascade="all, delete-orphan"
-    )
-
-
-class MeetingTask(Base):
-    """Задачи, извлечённые из встречи"""
-    __tablename__ = "meeting_tasks"
-
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    meeting_id: Mapped[int] = mapped_column(ForeignKey("meetings.id", ondelete="CASCADE"), index=True)
-    title: Mapped[str] = mapped_column(String(256))
-    description: Mapped[str] = mapped_column(Text, nullable=True)
-    assignee_name: Mapped[str] = mapped_column(String(128), nullable=True)
-    assignee_telegram_id: Mapped[int] = mapped_column(BigInteger, nullable=True)
-    deadline_at: Mapped[datetime] = mapped_column(DateTime, nullable=True)
-    created_in_kanban: Mapped[bool] = mapped_column(Boolean, default=False)
-    kanban_card_id: Mapped[str] = mapped_column(String(128), nullable=True)
-    
-    # Связи
-    meeting: Mapped[Meeting] = relationship(back_populates="extracted_tasks")
-
-
 # ========== КАНБАН-ДОСКА (НОВОЕ ДЛЯ КЕЙСА) ==========
 
 class KanbanTask(Base):

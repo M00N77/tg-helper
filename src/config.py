@@ -17,6 +17,10 @@ class LLMDefaults:
     GEMINI_CHAT_HEAVY = "gemini-3-flash-preview"
     GEMINI_EMBED = "text-embedding-004"
 
+    GROQ_CHAT_LIGHT = "llama-4-scout-17b-16e-instruct"
+    GROQ_CHAT_HEAVY = "llama-4-maverick-17b-128e-instruct"
+    GROQ_EMBED = "text-embedding-3-small"  # Groq не поддерживает embed — заглушка
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(

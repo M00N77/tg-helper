@@ -232,13 +232,14 @@ class Team(Base):
 
 
 class Meeting(Base):
-    """Запись встречи (Яндекс Телемост и другие)."""
+    """Запись встречи (платформонезависимая)."""
 
     __tablename__ = "meetings"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
-    telemost_url: Mapped[str] = mapped_column(Text)
+    meeting_url: Mapped[str] = mapped_column(Text)
+    platform: Mapped[str] = mapped_column(String(32), default="unknown", server_default="unknown")
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     transcript: Mapped[str | None] = mapped_column(Text, nullable=True)
     audio_path: Mapped[str | None] = mapped_column(String(512), nullable=True)

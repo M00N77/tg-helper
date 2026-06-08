@@ -5,6 +5,7 @@ from src.db.repo import get_api_key
 from src.llm.base import LLMProvider
 from src.llm.gemini_provider import GeminiProvider
 from src.llm.gigachat_provider import GigaChatProvider
+from src.llm.groq_provider import GroqProvider
 from src.llm.openai_provider import OpenAIProvider
 
 
@@ -20,4 +21,6 @@ async def build_provider(session: AsyncSession, user: User) -> LLMProvider | Non
         return GeminiProvider(key)
     if provider_name == "gigachat":
         return GigaChatProvider(key)
+    if provider_name == "groq":
+        return GroqProvider(key)
     return None

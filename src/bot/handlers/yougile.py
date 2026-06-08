@@ -1,4 +1,5 @@
 """Интеграция с YouGile канбан-доской."""
+import time
 import httpx
 import logging
 from typing import Dict, List, Optional
@@ -6,6 +7,8 @@ from typing import Dict, List, Optional
 
 class YouGileClient:
     """Клиент для работы с API YouGile"""
+
+    _BOARDS_CACHE_TTL = 60  # секунд
 
     def __init__(self, api_token: str, board_id: str | None = None):
         self.api_token = api_token
@@ -15,6 +18,8 @@ class YouGileClient:
             "Authorization": f"Bearer {api_token}",
             "Content-Type": "application/json"
         }
+        self._boards_cache: list | None = None
+        self._boards_cached_at: float = 0.0
 
     def _require_board(self) -> None:
         if not self.board_id:
@@ -93,12 +98,22 @@ class YouGileClient:
             return data.get("content", [])
 
     async def get_boards(self) -> list:
-        """Получить список досок (не требует board_id)"""
+        """Получить список досок (не требует board_id) с кэшем 60 сек"""
+        now = time.monotonic()
+        if self._boards_cache is not None and (now - self._boards_cached_at) < self._BOARDS_CACHE_TTL:
+            return self._boards_cache
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.get(
                 f"{self.base_url}/boards",
                 headers=self.headers
             )
+            if response.status_code == 404:
+                logging.warning(
+                    "[YouGile][get_boards] 404 — доски не найдены или нет прав"
+                )
+                self._boards_cache = []
+                self._boards_cached_at = now
+                return []
             if response.status_code != 200:
                 body = response.text
                 logging.warning(
@@ -108,7 +123,10 @@ class YouGileClient:
                     f"YouGile /boards вернул {response.status_code}: {body}"
                 )
             data = response.json()
-            return data.get("content", [])
+            result = data.get("content", [])
+            self._boards_cache = result
+            self._boards_cached_at = now
+            return result
 
     async def update_card(self, card_id: str, **kwargs) -> Dict:
         """Обновить карточку"""
