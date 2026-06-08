@@ -27,7 +27,14 @@ from aiogram.types import InlineKeyboardButton
 
 from src.bot.filters import OwnerOnly
 from src.core.transcription import transcription_service
-from src.db.repo import get_or_create_user, get_team_by_chat, get_api_key
+from src.db.repo import (
+    create_meeting,
+    get_or_create_user,
+    get_team_by_chat,
+    get_api_key,
+    update_meeting_summary,
+    update_meeting_transcript,
+)
 from src.db.session import get_session
 from src.llm.router import build_provider
 from src.llm.base import ChatMessage
@@ -223,6 +230,12 @@ async def handle_meeting_file(message: Message):
             data = json.loads(raw.strip().strip("```").lstrip("json").strip())
             summary = data.get("summary", "")
             tasks = data.get("tasks", [])
+
+            if meeting_id:
+                async with get_session() as session:
+                    await update_meeting_transcript(session, meeting_id, transcript, str(target))
+                    if summary:
+                        await update_meeting_summary(session, meeting_id, summary)
         except Exception as e:
             await notice.edit_text(
                 f"✅ Транскрипция готова, но разбор не удался: {e}\n\n"
@@ -232,6 +245,14 @@ async def handle_meeting_file(message: Message):
 
         async with get_session() as session:
             team = await get_team_by_chat(session, message.chat.id)
+
+        meeting_id: int | None = None
+        if team:
+            async with get_session() as session:
+                meeting = await create_meeting(
+                    session, team.id, f"upload:{message.message_id}",
+                )
+                meeting_id = meeting.id
 
         created_count = 0
         created_tasks: list[str] = []
