@@ -253,7 +253,10 @@ async def cb_menu_kanban(callback: CallbackQuery, state: FSMContext) -> None:
         return
 
     if not boards:
-        await callback.message.edit_text("❌ Досок не найдено")
+        await callback.message.edit_text(
+            "❌ Ошибка: В вашей компании не найдено досок "
+            "или у токена нет прав."
+        )
         await callback.answer()
         return
 

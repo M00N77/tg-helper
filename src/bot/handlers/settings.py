@@ -16,6 +16,7 @@ from src.db.repo import get_api_key, get_or_create_user, upsert_api_key
 from src.db.session import get_session
 from src.llm.gemini_provider import GeminiProvider
 from src.llm.gigachat_provider import GigaChatProvider
+from src.llm.groq_provider import GroqProvider
 from src.llm.openai_provider import OpenAIProvider
 
 
@@ -40,6 +41,7 @@ async def _render_menu(telegram_id: int) -> tuple[str, InlineKeyboardMarkup]:
         openai_key = await get_api_key(session, owner, "openai")
         gemini_key = await get_api_key(session, owner, "gemini")
         gigachat_key = await get_api_key(session, owner, "gigachat")
+        groq_key = await get_api_key(session, owner, "groq")
 
     text = (
         "⚙ <b>Настройки</b>\n\n"
@@ -123,7 +125,7 @@ BOOL_KEYS = {
 }
 
 CHOICE_KEYS = {
-    "llm_provider": {"openai", "gemini", "gigachat"},
+    "llm_provider": {"openai", "gemini", "gigachat", "groq"},
     "transcription_mode": {"local", "api", "hybrid"},
     "auto_reply_mode": {"static", "smart"},
 }
@@ -223,6 +225,7 @@ async def _render_section(telegram_id: int, section: str) -> tuple[str, InlineKe
         openai_key = await get_api_key(session, owner, "openai")
         gemini_key = await get_api_key(session, owner, "gemini")
         gigachat_key = await get_api_key(session, owner, "gigachat")
+        groq_key = await get_api_key(session, owner, "groq")
 
     kb = InlineKeyboardBuilder()
 
@@ -347,7 +350,10 @@ async def _render_section(telegram_id: int, section: str) -> tuple[str, InlineKe
             else LLMDefaults.GEMINI_CHAT_HEAVY if s.use_heavy_model and s.llm_provider == "gemini"
             else LLMDefaults.GEMINI_CHAT_LIGHT if s.llm_provider == "gemini"
             else "GigaChat-Pro" if s.use_heavy_model and s.llm_provider == "gigachat"
-            else "GigaChat"
+            else "GigaChat" if s.llm_provider == "gigachat"
+            else LLMDefaults.GROQ_CHAT_HEAVY if s.use_heavy_model and s.llm_provider == "groq"
+            else LLMDefaults.GROQ_CHAT_LIGHT if s.llm_provider == "groq"
+            else "?"
         )
         text = (
             "🤖 <b>LLM-провайдер</b>\n\n"
@@ -369,6 +375,10 @@ async def _render_section(telegram_id: int, section: str) -> tuple[str, InlineKe
             InlineKeyboardButton(
                 text=("• " if s.llm_provider == "gigachat" else "") + "GigaChat",
                 callback_data="set:choose:llm_provider:gigachat",
+            ),
+            InlineKeyboardButton(
+                text=("• " if s.llm_provider == "groq" else "") + "Groq",
+                callback_data="set:choose:llm_provider:groq",
             ),
         )
         kb.row(InlineKeyboardButton(
@@ -434,12 +444,16 @@ async def _render_section(telegram_id: int, section: str) -> tuple[str, InlineKe
             "Хранятся зашифрованными (Fernet). Можно перезаписать в любой момент.\n\n"
             f"OpenAI: {_check(bool(openai_key))}\n"
             f"Gemini: {_check(bool(gemini_key))}\n"
-            f"GigaChat: {_check(bool(gigachat_key))}"
+            f"GigaChat: {_check(bool(gigachat_key))}\n"
+            f"Groq: {_check(bool(groq_key))}"
         )
         kb.row(
             InlineKeyboardButton(text="🔑 OpenAI key", callback_data="set:input:openai_key"),
             InlineKeyboardButton(text="🔑 Gemini key", callback_data="set:input:gemini_key"),
+        )
+        kb.row(
             InlineKeyboardButton(text="🔑 GigaChat key", callback_data="set:input:gigachat_key"),
+            InlineKeyboardButton(text="🔑 Groq key", callback_data="set:input:groq_key"),
         )
         kb.row(*_back_row())
 
@@ -484,6 +498,19 @@ async def cb_input_gigachat(callback: CallbackQuery, state: FSMContext) -> None:
         "Нужна base64-строка от <code>client_id:client_secret</code> из личного кабинета Sber.\n"
         "Пример: <code>echo -n \"client_id:client_secret\" | base64</code>\n\n"
         "📌 Где взять: <a href=\"https://developers.sber.ru/portal/products/gigachat-api\">developers.sber.ru</a>\n\n"
+        "/cancel — отмена."
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "set:input:groq_key")
+async def cb_input_groq(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(SettingsStates.waiting_groq_key)
+    await callback.message.answer(
+        "🔑 <b>Groq API key</b>\n\n"
+        "Пришли ключ (начинается с <code>gsk_</code>). Проверю и сохраню.\n\n"
+        "Groq — бесплатный провайдер, 14 400 запросов/день, без привязки карты.\n"
+        "📌 Где взять: <a href=\"https://console.groq.com/keys\">console.groq.com/keys</a>\n\n"
         "/cancel — отмена."
     )
     await callback.answer()
@@ -613,6 +640,29 @@ async def step_gigachat_key(message: Message, state: FSMContext) -> None:
         await upsert_api_key(session, owner, "gigachat", key)
     await state.clear()
     await message.answer("✅ GigaChat подключён.")
+
+
+@router.message(SettingsStates.waiting_groq_key)
+async def step_groq_key(message: Message, state: FSMContext) -> None:
+    key = (message.text or "").strip()
+    if not key:
+        await message.answer("Пустой ключ. Повтори или /cancel.")
+        return
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    if not await GroqProvider(key).validate_key():
+        await message.answer(
+            "❌ Ключ не работает. Повтори или /cancel.\n\n"
+            "📌 Где взять: <a href=\"https://console.groq.com/keys\">console.groq.com/keys</a>"
+        )
+        return
+    async with get_session() as session:
+        owner = await get_or_create_user(session, message.from_user.id)
+        await upsert_api_key(session, owner, "groq", key)
+    await state.clear()
+    await message.answer("✅ Groq key сохранён. Теперь переключись на Groq в /settings → LLM.")
 
 
 @router.message(SettingsStates.waiting_digest_time)

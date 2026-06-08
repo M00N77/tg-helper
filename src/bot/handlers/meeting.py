@@ -3,6 +3,22 @@ import json
 import logging
 from pathlib import Path
 
+
+def detect_platform(url: str) -> str:
+    """Определить платформу видеоконференции по URL встречи."""
+    url_lower = url.lower()
+    if "telemost.yandex" in url_lower:
+        return "yandex"
+    if "tolk" in url_lower:
+        return "kontur"
+    if "mts-link" in url_lower:
+        return "mts"
+    if "jazz.sber" in url_lower or "sberjazz" in url_lower:
+        return "sber"
+    if "zoom.us" in url_lower or "zoom.com" in url_lower:
+        return "zoom"
+    return "unknown"
+
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
@@ -51,6 +67,7 @@ async def cmd_meeting(message: Message):
 
     if team and team.kanban_token:
         kb.row(InlineKeyboardButton(text="📊 Создать задачи на YouGile", callback_data="meeting:yougile"))
+    kb.row(InlineKeyboardButton(text="🔑 API МТС Линк", callback_data="meeting:mtslink_token"))
 
     await message.answer(
         "🎙 Встречи\n\n"
@@ -70,11 +87,36 @@ async def cb_meeting_howto(callback: CallbackQuery):
     kb = InlineKeyboardBuilder()
     kb.row(InlineKeyboardButton(text="◀ Назад", callback_data="meeting:back"))
     await callback.message.edit_text(
-        "Как использовать:\n"
-        "1. Запиши встречу в Яндекс Телемосте\n"
-        "2. Скачай запись (кнопка в интерфейсе Телемоста)\n"
+        "Как использовать:\n\n"
+        "1. Запиши встречу (Контур Толк, Яндекс Телемост, "
+        "СберДжаз, МТС Линк и др.)\n"
+        "2. Скачай запись на устройство\n"
         "3. Отправь файл сюда (аудио или видео)\n"
-        "4. Бот транскрибирует и создаст задачи на доске",
+        "4. Бот транскрибирует речь и создаст задачи на доске",
+        reply_markup=kb.as_markup(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "meeting:mtslink_token")
+async def cb_meeting_mtslink_token(callback: CallbackQuery):
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="◀ Назад", callback_data="meeting:back"))
+    await callback.message.edit_text(
+        "🔑 <b>API МТС Линк</b>\n\n"
+        "Чтобы бот мог создавать встречи через МТС Линк, "
+        "нужен API-токен.\n\n"
+        "<b>Где взять:</b>\n"
+        "1. Зайди в <a href='https://mts-link.ru'>mts-link.ru</a>\n"
+        "2. «Бизнес» → «API / Webhooks» → вкладка «API»\n"
+        "3. Нажми «Добавить», скопируй ключ\n\n"
+        "<b>Как сохранить в боте:</b>\n"
+        "Напиши в чат:\n"
+        "<code>сохрани mtslink token ТВОЙ_КЛЮЧ</code>\n\n"
+        "После этого команда «запланируй встречу» "
+        "будет создавать встречи через МТС Линк.",
+        parse_mode="HTML",
+        disable_web_page_preview=True,
         reply_markup=kb.as_markup(),
     )
     await callback.answer()
@@ -91,6 +133,7 @@ async def cb_meeting_back(callback: CallbackQuery):
 
     if team and team.kanban_token:
         kb.row(InlineKeyboardButton(text="📊 Создать задачи на YouGile", callback_data="meeting:yougile"))
+    kb.row(InlineKeyboardButton(text="🔑 API МТС Линк", callback_data="meeting:mtslink_token"))
 
     await callback.message.edit_text(
         "🎙 Встречи\n\n"
@@ -191,11 +234,23 @@ async def handle_meeting_file(message: Message):
             team = await get_team_by_chat(session, message.chat.id)
 
         created_count = 0
+        created_tasks: list[str] = []
+        board_title = ""
+        first_col_title = ""
         if team and team.kanban_token and team.kanban_board_id and tasks:
             client = YouGileClient(team.kanban_token, team.kanban_board_id)
             try:
+                boards = await client.get_boards()
+                for b in boards:
+                    if b["id"] == team.kanban_board_id:
+                        board_title = b.get("title", "")
+                        break
                 columns = await client.get_columns()
-                first_col_id = columns[0]["id"] if columns else None
+                if columns:
+                    first_col_id = columns[0]["id"]
+                    first_col_title = columns[0].get("title", "")
+                else:
+                    first_col_id = None
             except Exception:
                 first_col_id = None
 
@@ -205,7 +260,8 @@ async def handle_meeting_file(message: Message):
                     if not title:
                         continue
                     try:
-                        await client.create_card(title, "", first_col_id)
+                        card = await client.create_card(title, "", first_col_id)
+                        created_tasks.append(card.get("title", title))
                         created_count += 1
                     except Exception:
                         pass
@@ -239,7 +295,20 @@ async def handle_meeting_file(message: Message):
             lines.append("\nЗадач не выявлено.")
 
         if created_count > 0:
-            lines.append(f"\n📊 Создано на доске YouGile: <b>{created_count}</b> задач")
+            board_part = f"«{board_title}»" if board_title else "YouGile"
+            col_part = f" (колонка «{first_col_title}»)" if first_col_title else ""
+            lines.append(f"\n📊 <b>Создано на доске {board_part}{col_part}:</b>")
+            for t in created_tasks:
+                lines.append(f"  • {t}")
+            # Change C: свежий срез доски после создания задач
+            try:
+                snapshot = await build_board_text(
+                    client,
+                    f"📊 Текущее состояние доски «{board_title or team.kanban_board_id}»",
+                )
+                lines.append(f"\n{snapshot}")
+            except Exception:
+                pass
         elif tasks and (not team or not team.kanban_token):
             lines.append("\n💡 Подключи YouGile (/kanban) чтобы задачи создавались автоматически.")
 

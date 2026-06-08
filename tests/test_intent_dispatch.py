@@ -123,7 +123,7 @@ class TestAllIntentsParsed:
         assert _safe_parse(raw)["intent"] == "schedule_meeting"
 
     def test_join_meeting(self):
-        raw = '{"intent": "join_meeting", "url": "https://telemost.yandex.ru/abc"}'
+        raw = '{"intent": "join_meeting", "url": "https://my.mts-link.ru/abc"}'
         assert _safe_parse(raw)["intent"] == "join_meeting"
 
     def test_meeting_summary(self):

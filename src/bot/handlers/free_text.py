@@ -24,6 +24,7 @@ from src.core.transcription import transcription_service
 from src.db.repo import (
     add_commitment,
     add_news_topic,
+    create_meeting,
     create_pending_action,
     delete_news_topic,
     get_api_key,
@@ -33,6 +34,7 @@ from src.db.repo import (
     list_news_topics,
     list_open_commitments,
     update_commitment_status,
+    upsert_api_key,
     upsert_contact,
 )
 from src.db.session import get_session
@@ -64,9 +66,10 @@ SETTING_FIELDS: dict[str, str] = {
     "reminder_overdue_enabled":   "bool",
     "ignore_archived":            "bool",
     "use_heavy_model":            "bool",
-    "llm_provider":               "choice:openai,gemini,gigachat",
+    "llm_provider":               "choice:openai,gemini,gigachat,groq",
     "transcription_mode":         "choice:local,api,hybrid",
     "timezone":                   "tz",
+    "mtslink_token":              "token",
 }
 
 
@@ -100,6 +103,10 @@ def _coerce_setting_value(spec: str, raw):
         if isinstance(raw, str) and is_valid_tz(raw.strip()):
             return raw.strip(), None
         return None, "не нашёл такой IANA timezone"
+    if spec == "token":
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip(), None
+        return None, "ожидаю строку с токеном"
     if spec.startswith("choice:"):
         opts = set(spec[len("choice:"):].split(","))
         if isinstance(raw, str) and raw.strip() in opts:
@@ -576,6 +583,12 @@ async def _exec_set_setting(intent, message) -> None:
     if err:
         await message.answer(f"Не понял значение для <b>{key}</b>: {err}.")
         return
+    if spec == "token":
+        async with get_session() as session:
+            owner = await get_or_create_user(session, message.from_user.id)
+            await upsert_api_key(session, owner, key.replace("_token", ""), validated)
+        await message.answer(f"✅ API-ключ <b>{key}</b> сохранён.")
+        return
     async with get_session() as session:
         owner = await get_or_create_user(session, message.from_user.id)
         setattr(owner.settings, key, validated)
@@ -808,29 +821,77 @@ async def _dispatch(intent, message, state, userbot_manager, *, tz_name: str) ->
 
 
 async def _exec_meeting_intent(intent: dict, message: Message) -> None:
+    from src.services.meeting_room import create_meeting_room
+    from src.bot.handlers.meeting import detect_platform
+
     kind = intent.get("intent")
-    if kind == "join_meeting":
-        url = intent.get("url", "").strip()
-        if url:
-            await message.answer(
-                f"🔗 <b>Подключение к встрече</b>\n\n"
-                f"Используй:\n<code>/meeting join {url}</code>"
-            )
-        else:
-            await message.answer(
-                "🎥 <b>Подключение к встрече</b>\n\n"
-                "Отправь ссылку на Яндекс Телемост командой:\n"
-                "<code>/meeting join https://telemost.yandex.ru/j/...</code>"
-            )
-        return
-    if kind == "schedule_meeting":
-        await message.answer(
-            "📅 <b>Запланировать встречу</b>\n\n"
-            "Пока я не умею создавать встречи через API Яндекса.\n"
-            "Могу подключиться к существующей — отправь ссылку:\n"
-            "<code>/meeting join https://telemost.yandex.ru/j/...</code>"
-        )
-        return
+
+    if kind in ("join_meeting", "schedule_meeting"):
+        async with get_session() as session:
+            owner = await get_or_create_user(session, message.from_user.id)
+            mtslink_token = await get_api_key(session, owner, "mtslink")
+            team = await get_team_by_chat(session, message.chat.id)
+
+        if kind == "schedule_meeting":
+            title = intent.get("title", "Встреча")
+            starts_at = intent.get("datetime")
+            try:
+                url = await create_meeting_room(title, mtslink_token, starts_at)
+            except Exception as e:
+                await message.answer(f"❌ Не удалось создать встречу: {e}")
+                return
+
+            platform = detect_platform(url)
+
+            if team:
+                async with get_session() as session:
+                    await create_meeting(session, team.id, url, platform)
+
+            parts = [f"📅 <b>Встреча создана</b>\n\nНазвание: <b>{title}</b>"]
+            if starts_at:
+                from datetime import datetime, timezone, timedelta
+                _months = {
+                    1: "января", 2: "февраля", 3: "марта", 4: "апреля",
+                    5: "мая", 6: "июня", 7: "июля", 8: "августа",
+                    9: "сентября", 10: "октября", 11: "ноября", 12: "декабря",
+                }
+                try:
+                    s = starts_at.replace("Z", "+00:00")
+                    dt = datetime.fromisoformat(s)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone(timedelta(hours=3)))
+                    msk = dt.astimezone(timezone(timedelta(hours=3)))
+                    parts.append(f"Начало: {msk.day} {_months[msk.month]} {msk.year} в {msk:%H:%M} (МСК)")
+                except Exception:
+                    pass
+            parts.append(f"Ссылка: <code>{url}</code>\n\nОтправь эту ссылку участникам для подключения.")
+            await message.answer("\n".join(parts))
+            return
+
+        if kind == "join_meeting":
+            url = intent.get("url", "").strip()
+            if url:
+                platform = detect_platform(url)
+                if team:
+                    async with get_session() as session:
+                        await create_meeting(session, team.id, url, platform)
+
+                await message.answer(
+                    f"🔗 <b>Подключение к встрече</b>\n\n"
+                    f"Ссылка: <code>{url}</code>\n"
+                    f"Открой её в браузере, чтобы присоединиться."
+                )
+            else:
+                await message.answer(
+                    "🎥 <b>Подключение к встрече</b>\n\n"
+                    "Отправь ссылку на видеовстречу, например:\n"
+                    "<code>https://telemost.yandex.ru/j/...</code>\n"
+                    "<code>https://my.mts-link.ru/...</code>\n"
+                    "<code>https://jazz.sber.ru/...</code>\n"
+                    "<code>https://kontur.ru/tolk/...</code>"
+                )
+            return
+
     if kind == "meeting_summary":
         await message.answer(
             "📝 <b>Итоги встречи</b>\n\n"

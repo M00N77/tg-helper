@@ -32,7 +32,7 @@ async def build_board_text(client: YouGileClient, board_title: str) -> str:
     text = f"📊 <b>{board_title}</b>\n\n"
     for col in columns:
         try:
-            cards = await client.get_cards_in_column(col["id"], limit=5)
+            cards = await client.get_cards_in_column(col["id"])
         except Exception as e:
             text += f"<b>{col.get('title', '?')}</b> (ошибка: {e})\n\n"
             continue
@@ -297,17 +297,16 @@ async def cmd_kanban_board(message: Message, state: FSMContext):
             return
         if not boards:
             await message.answer(
-                "✅ Авторизация прошла успешно, но в этой компании "
-                "не найдено ни одной доски.\n"
-                "Создай доску в YouGile и попробуй снова."
+                "❌ Ошибка: В вашей компании не найдено досок "
+                "или у токена нет прав."
             )
             return
-        text = "Выбери доску (введи номер):\n"
-        for i, b in enumerate(boards, 1):
-            text += f"{i}. {b['title']} (id: {b['id']})\n"
-        await state.update_data(boards=boards)
-        await state.set_state(KanbanAuthStates.waiting_for_board)
-        await message.answer(text)
+    text = "Выбери доску (введи номер):\n"
+    for i, b in enumerate(boards, 1):
+        text += f"{i}. {b['title']} (id: {b['id']})\n"
+    await state.update_data(boards=boards)
+    await state.set_state(KanbanAuthStates.waiting_for_board)
+    await message.answer(text)
 
 
 @router.message(KanbanAuthStates.waiting_for_board)
@@ -639,9 +638,8 @@ async def cb_kanban_change_board(callback: CallbackQuery, state: FSMContext):
 
     if not boards:
         await callback.message.edit_text(
-            "✅ Авторизация прошла успешно, но в этой компании "
-            "не найдено ни одной доски.\n"
-            "Создай доску в YouGile и попробуй снова."
+            "❌ Ошибка: В вашей компании не найдено досок "
+            "или у токена нет прав."
         )
         await callback.answer()
         return

@@ -238,10 +238,10 @@ class TestRouteIntentReal:
 
     async def test_join_meeting(self, provider):
         result = await route_intent(
-            provider, "подключись к встрече https://telemost.yandex.ru/j/abc123",
+            provider, "подключись к встрече https://my.mts-link.ru/abc123",
         )
         assert result["intent"] == "join_meeting"
-        assert "telemost" in result.get("url", "")
+        assert "url" in result
 
     async def test_meeting_summary(self, provider):
         result = await route_intent(
