@@ -45,7 +45,7 @@ async def test_get_or_create_user_creates_settings(session):
     user = await get_or_create_user(session, telegram_id=999999998)
     assert user.settings is not None
     assert user.settings.llm_provider == "openai"
-    assert user.settings.timezone == "UTC"
+    assert user.settings.timezone == "Europe/Moscow"
 
 
 @pytest.mark.asyncio

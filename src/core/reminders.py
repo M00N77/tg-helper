@@ -1,4 +1,8 @@
-"""Напоминания о Commitment'ах: пинги об overdue и о приближении дедлайна."""
+"""Напоминания о Commitment'ах: пинги об overdue и о приближении дедлайна.
+
+Overdue напоминания повторяются каждые RE_REMINDER_HOURS, пока задача не закрыта.
+Lead-напоминания (скоро дедлайн) — одноразовые.
+"""
 import asyncio
 import logging
 from datetime import datetime, timedelta
@@ -9,7 +13,7 @@ from src.config import settings as app_settings
 from src.core.notifier import notifier
 from src.core.timeutil import fmt_local
 from src.db.models import Commitment
-from src.db.repo import get_or_create_user, update_commitment_status
+from src.db.repo import get_or_create_user
 from src.db.session import get_session
 
 
@@ -17,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 REMINDER_TICK_SECONDS = 300
+RE_REMINDER_HOURS = 6
 
 
 async def _check_once(owner_telegram_id: int) -> None:
@@ -26,9 +31,8 @@ async def _check_once(owner_telegram_id: int) -> None:
         if not s.reminders_enabled:
             return
 
-        tz_name = s.timezone
-        now = datetime.utcnow()
         lead_hours = max(0, int(s.reminder_lead_hours))
+        now = datetime.utcnow()
         soon = now + timedelta(hours=lead_hours)
 
         result = await session.execute(
@@ -43,19 +47,23 @@ async def _check_once(owner_telegram_id: int) -> None:
     if not open_items:
         return
 
+    re_remind = timedelta(hours=RE_REMINDER_HOURS)
     to_remind: list[tuple[Commitment, str]] = []
     for c in open_items:
         d = c.deadline_at
         if d is None:
             continue
         if d < now and s.reminder_overdue_enabled:
-            to_remind.append((c, "overdue"))
+            if c.last_reminded_at is None or (now - c.last_reminded_at) > re_remind:
+                to_remind.append((c, "overdue"))
         elif now <= d <= soon and lead_hours > 0:
-            to_remind.append((c, "lead"))
+            if c.last_reminded_at is None:
+                to_remind.append((c, "lead"))
 
     if not to_remind:
         return
 
+    tz_name = s.timezone
     for commitment, reason in to_remind:
         who = "Я" if commitment.direction == "mine" else (commitment.peer_name or "Они")
         d = fmt_local(commitment.deadline_at, tz_name)
@@ -73,10 +81,11 @@ async def _check_once(owner_telegram_id: int) -> None:
             )
         await notifier.notify(text)
 
-    # помечаем reminded чтобы не дублировать
     async with get_session() as session:
         for c, _ in to_remind:
-            await update_commitment_status(session, c.id, "reminded")
+            commitment = await session.get(Commitment, c.id)
+            if commitment is not None:
+                commitment.last_reminded_at = now
 
 
 async def reminders_loop() -> None:

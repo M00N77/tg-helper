@@ -48,7 +48,7 @@ class UserSettings(Base):
     auto_reply_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     llm_provider: Mapped[str] = mapped_column(String(16), default="openai")
     use_heavy_model: Mapped[bool] = mapped_column(Boolean, default=False)
-    timezone: Mapped[str] = mapped_column(String(64), default="UTC")
+    timezone: Mapped[str] = mapped_column(String(64), default="Europe/Moscow")
     digest_time: Mapped[str] = mapped_column(String(5), default="09:00")
     digest_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     transcription_mode: Mapped[str] = mapped_column(String(16), default="local")
@@ -224,7 +224,8 @@ class Commitment(Base):
     direction: Mapped[str] = mapped_column(String(8))  # mine | theirs
     text: Mapped[str] = mapped_column(Text)
     deadline_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    status: Mapped[str] = mapped_column(String(16), default="open")  # open, done, cancelled, reminded
+    status: Mapped[str] = mapped_column(String(16), default="open")  # open, done, cancelled
+    last_reminded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
