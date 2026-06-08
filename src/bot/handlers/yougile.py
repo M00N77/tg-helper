@@ -43,13 +43,18 @@ class YouGileClient:
         title: str,
         description: str,
         column_id: str,
-        assignee_ids: Optional[List[str]] = None
+        assignee_ids: Optional[list[str]] = None,
+        deadline: str | None = None,
     ) -> Dict:
         """Создать карточку задачи"""
         self._require_board()
-        payload = {"title": title, "columnId": column_id}
+        payload: dict = {"title": title, "columnId": column_id}
         if description:
             payload["description"] = description
+        if assignee_ids:
+            payload["assigned"] = assignee_ids
+        if deadline:
+            payload["deadline"] = deadline
         logging.warning(f"[YouGile][create_card] payload={payload}")
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(

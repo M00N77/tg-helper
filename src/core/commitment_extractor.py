@@ -111,11 +111,13 @@ async def extract_and_save_commitments(
                         columns = await _client.get_columns()
                         if columns:
                             col_id = columns[0]["id"]
+                            deadline_raw = item.get("deadline") or ""
+                            deadline = deadline_raw[:10] if deadline_raw else None
                             await _client.create_card(
                                 title=text,
-                                description=f"Дедлайн: {item.get('deadline')}\nСобеседник: {contact.display_name}",
+                                description=f"Собеседник: {contact.display_name}",
                                 column_id=col_id,
-                                assignee_ids=[],
+                                deadline=deadline,
                             )
                             logger.info("YouGile card created: %s", text)
                             try:

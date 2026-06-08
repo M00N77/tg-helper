@@ -1,4 +1,4 @@
-"""Интеграция с YouGile/Trello канбан-доской."""
+"""Интеграция с YouGile канбан-доской."""
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -74,7 +74,7 @@ async def cmd_kanban(message: Message):
         "✅ Назначает ответственных\n"
         "✅ Отслеживает дедлайны\n"
         "✅ Перемещает задачи по статусам\n\n"
-        "Поддерживаются: YouGile, Trello",
+        "Поддерживается: YouGile",
         reply_markup=kb.as_markup()
     )
 
@@ -85,15 +85,13 @@ async def cb_kanban_setup(callback: CallbackQuery, state: FSMContext):
     kb = InlineKeyboardBuilder()
     kb.row(
         InlineKeyboardButton(text="📦 YouGile", callback_data="kanban:provider:yougile"),
-        InlineKeyboardButton(text="📌 Trello", callback_data="kanban:provider:trello"),
     )
     kb.row(InlineKeyboardButton(text="◀ Назад", callback_data="kanban:back"))
     kb.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="goto:main:confirm"))
     
     await callback.message.edit_text(
         "🔌 <b>Выберите канбан-доску</b>\n\n"
-        "YouGile — российский сервис\n"
-        "Trello — международный",
+        "YouGile — российский сервис",
         reply_markup=kb.as_markup()
     )
     await callback.answer()
@@ -106,21 +104,13 @@ async def cb_kanban_provider(callback: CallbackQuery, state: FSMContext):
     
     await state.update_data(kanban_provider=provider)
     await state.set_state(KanbanStates.waiting_token)
-    
-    if provider == "yougile":
-        instructions = (
-            "1. Перейдите в https://yougile.com\n"
-            "2. Создайте доску или откройте существующую\n"
-            "3. Настройки → API → Создать токен\n"
-            "4. Скопируйте токен"
-        )
-    else:
-        instructions = (
-            "1. Перейдите в https://trello.com\n"
-            "2. Откройте https://trello.com/power-ups/admin\n"
-            "3. Создайте API Key\n"
-            "4. Скопируйте ключ и токен"
-        )
+
+    instructions = (
+        "1. Перейдите в https://yougile.com\n"
+        "2. Создайте доску или откройте существующую\n"
+        "3. Настройки → API → Создать токен\n"
+        "4. Скопируйте токен"
+    )
     
     await callback.message.answer(
         f"🔑 <b>Введите API токен для {provider}</b>\n\n"
@@ -155,10 +145,7 @@ async def step_kanban_token(message: Message, state: FSMContext):
     board_id = parts[1]
     
     # Проверяем подключение
-    if provider == "yougile":
-        client = YouGileClient(token, board_id)
-    else:
-        client = TrelloClient(token, board_id)
+    client = YouGileClient(token, board_id)
     
     try:
         columns = await client.get_columns()
@@ -754,7 +741,7 @@ async def cb_kanban_back_to_menu(callback: CallbackQuery):
         "✅ Назначает ответственных\n"
         "✅ Отслеживает дедлайны\n"
         "✅ Перемещает задачи по статусам\n\n"
-        "Поддерживаются: YouGile, Trello",
+        "Поддерживается: YouGile",
         reply_markup=kb.as_markup(),
     )
     await callback.answer()
