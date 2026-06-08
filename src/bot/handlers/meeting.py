@@ -218,6 +218,17 @@ async def handle_meeting_file(message: Message):
             )
             return
 
+        async with get_session() as session:
+            team = await get_team_by_chat(session, message.chat.id)
+
+        meeting_id: int | None = None
+        if team:
+            async with get_session() as session:
+                meeting = await create_meeting(
+                    session, team.id, f"upload:{message.message_id}",
+                )
+                meeting_id = meeting.id
+
         await notice.edit_text("🤖 Анализирую встречу…")
         try:
             raw = await provider.chat(
@@ -242,17 +253,6 @@ async def handle_meeting_file(message: Message):
                 f"{transcript[:800]}"
             )
             return
-
-        async with get_session() as session:
-            team = await get_team_by_chat(session, message.chat.id)
-
-        meeting_id: int | None = None
-        if team:
-            async with get_session() as session:
-                meeting = await create_meeting(
-                    session, team.id, f"upload:{message.message_id}",
-                )
-                meeting_id = meeting.id
 
         created_count = 0
         created_tasks: list[str] = []

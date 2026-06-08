@@ -51,5 +51,11 @@ class MenuStates(StatesGroup):
     waiting_news_topic = State()
 
 
+class TeamStates(StatesGroup):
+    waiting_team_name = State()
+    waiting_chat_id = State()
+    waiting_invite_username = State()
+
+
 class MeetingStates(StatesGroup):
     waiting_url = State()

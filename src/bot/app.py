@@ -26,6 +26,7 @@ from src.bot.handlers import (
     settings as settings_handlers,
     start,
     style_cmd,
+    team as team_handlers,
     todos,
 )
 from src.config import settings
@@ -67,6 +68,7 @@ async def run_bot(userbot_manager: UserbotManager) -> None:
     dp.include_router(weekly.router)
     dp.include_router(burnout.router)
     dp.include_router(meeting.router)
+    dp.include_router(team_handlers.router)
     # ВАЖНО: free_text — самым последним, чтобы команды и FSM перехватили текст раньше
     dp.include_router(free_text.router)
 

@@ -5,46 +5,39 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 from src.bot.handlers.yougile import YouGileClient
-from src.db.repo import get_team_by_chat
+from src.db.repo import get_team_by_chat, get_or_create_user
 from src.db.session import get_session
+from src.llm.base import ChatMessage
+from src.llm.router import build_provider
 
 router = Router(name="kanban_analytics")
 
 NOW_MS = lambda: int(time.time() * 1000)
 
+SENTIMENT_PROMPT = (
+    "Оцени общее настроение команды по названиям задач. "
+    "Ответь ТОЛЬКО одной строкой: emoji + 2-4 слова "
+    "(например: '😊 Команда в тонусе' или '😰 Много проблем').\n\n"
+    "Задачи:\n{sample}"
+)
 
-async def _analyze_sentiment(card_titles: list[str]) -> str:
+
+async def _analyze_sentiment(card_titles: list[str], message: Message) -> str:
     if not card_titles:
         return "😐 Недостаточно данных"
     sample = "\n".join(f"- {t}" for t in card_titles[:30])
     try:
-        import aiohttp
-        async with aiohttp.ClientSession() as s:
-            r = await s.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "Content-Type": "application/json",
-                    "x-api-key": __import__('os').environ.get("ANTHROPIC_API_KEY", ""),
-                    "anthropic-version": "2023-06-01",
-                },
-                json={
-                    "model": "claude-sonnet-4-20250514",
-                    "max_tokens": 100,
-                    "messages": [{
-                        "role": "user",
-                        "content": (
-                            f"Оцени общее настроение команды по названиям задач. "
-                            f"Ответь ТОЛЬКО одной строкой: emoji + 2-4 слова (например: '😊 Команда в тонусе' или '😰 Много проблем').\n\n"
-                            f"Задачи:\n{sample}"
-                        )
-                    }]
-                }
-            )
-            data = await r.json()
-            text = data["content"][0]["text"].strip()
-            return text
-    except Exception as e:
-        return f"😐 Анализ недоступен"
+        async with get_session() as session:
+            owner = await get_or_create_user(session, message.from_user.id)
+            provider = await build_provider(session, owner)
+        if provider is None:
+            return "😐 Анализ недоступен (нет LLM-ключа)"
+        reply = await provider.chat([
+            ChatMessage(role="user", content=SENTIMENT_PROMPT.format(sample=sample)),
+        ], heavy=False)
+        return reply.strip() or "😐 Анализ недоступен"
+    except Exception:
+        return "😐 Анализ недоступен"
 
 
 @router.message(Command("kanban_analytics"))
@@ -123,7 +116,7 @@ async def cmd_kanban_analytics(message: Message) -> None:
             all_titles.extend([c.get("title", "") for c in cards if c.get("title")])
         except Exception:
             pass
-    sentiment = await _analyze_sentiment(all_titles)
+    sentiment = await _analyze_sentiment(all_titles, message)
     lines.append(f"\n🧠 <b>Настроение команды:</b> {sentiment}")
 
     await message.answer("\n".join(lines), parse_mode="HTML")
