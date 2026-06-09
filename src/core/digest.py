@@ -12,7 +12,7 @@ from src.db.models import AutoReplyLog, Commitment, Message, User
 from src.db.repo import get_or_create_user, list_open_commitments
 from src.db.session import get_session
 from src.llm.base import ChatMessage
-from src.llm.router import build_provider
+from src.llm.router import get_provider_chain, llm_with_fallback
 
 
 logger = logging.getLogger(__name__)
@@ -121,14 +121,19 @@ def _payload_to_text(payload: dict, tz_name: str) -> str:
     return "\n\n".join(parts) or "Активности не было."
 
 
-async def build_digest(owner_telegram_id: int) -> str:
+async def build_digest(
+    owner_telegram_id: int,
+    *,
+    notify_bot=None,
+    notify_chat_id: int | None = None,
+) -> str:
     async with get_session() as session:
         owner = await get_or_create_user(session, owner_telegram_id)
-        provider = await build_provider(session, owner)
+        providers = await get_provider_chain(session, owner)
         heavy = owner.settings.use_heavy_model
         tz_name = owner.settings.timezone
 
-    if provider is None:
+    if not providers:
         return "Не задан LLM-ключ — не могу собрать дайджест. Открой /settings."
 
     payload = await _gather_payload(owner)
@@ -136,12 +141,15 @@ async def build_digest(owner_telegram_id: int) -> str:
     if raw_text == "Активности не было.":
         return "☀ Доброе утро! За ночь — тишина."
 
-    response = await provider.chat(
+    response = await llm_with_fallback(
+        providers,
         [
             ChatMessage(role="system", content=DIGEST_SYSTEM),
             ChatMessage(role="user", content=raw_text),
         ],
         heavy=heavy,
+        notify_bot=notify_bot,
+        notify_chat_id=notify_chat_id,
     )
     return sanitize_html(response)
 

@@ -19,7 +19,7 @@ from src.db.repo import (
 )
 from src.db.session import get_session
 from src.llm.base import ChatMessage
-from src.llm.router import build_provider
+from src.llm.router import get_provider_chain, llm_with_fallback
 from src.userbot.manager import UserbotManager
 
 
@@ -108,16 +108,19 @@ async def cmd_send(
     if not recipient_query or not text:
         async with get_session() as session:
             owner = await get_or_create_user(session, message.from_user.id)
-            provider = await build_provider(session, owner)
-        if provider is None:
+            providers = await get_provider_chain(session, owner)
+        if not providers:
             await message.answer("Нужен LLM-ключ для NL-парсинга. Добавь в /settings или используй формат «получатель | текст».")
             return
-        parsed_raw = await provider.chat(
+        parsed_raw = await llm_with_fallback(
+            providers,
             [
                 ChatMessage(role="system", content=PARSE_SYSTEM),
                 ChatMessage(role="user", content=raw),
             ],
             heavy=False,
+            notify_bot=message.bot,
+            notify_chat_id=message.chat.id,
         )
         parsed = _parse_json(parsed_raw)
         recipient_query = parsed.get("recipient") or recipient_query

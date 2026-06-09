@@ -16,6 +16,7 @@ from src.db.models import Contact, User
 from src.db.repo import get_or_create_user, list_contacts, list_news_topics
 from src.db.session import get_session
 from src.llm.base import ChatMessage, LLMProvider
+from src.llm.router import llm_with_fallback
 
 
 logger = logging.getLogger(__name__)
@@ -88,7 +89,8 @@ async def build_news_digest(
     per_channel_limit: int = 80,
     top_k: int = 12,
     only_marked_sources: bool = True,
-    provider_override: LLMProvider | None = None,
+    notify_bot=None,
+    notify_chat_id: int | None = None,
 ) -> str:
     """Готовит дайджест. Если only_marked_sources=False — берёт все подписанные каналы."""
     async with get_session() as session:
@@ -98,20 +100,20 @@ async def build_news_digest(
             include_bots=False,
             only_news_sources=only_marked_sources,
         )
-        # если "только помеченные" не дали ничего — fallback на все каналы
         if only_marked_sources and not channels:
             channels = await list_contacts(session, owner, kinds=("channel",))
 
-        provider = provider_override
-        if provider is None:
-            from src.llm.router import build_provider
-            provider = await build_provider(session, owner)
+        from src.llm.router import get_provider_chain
+        providers = await get_provider_chain(session, owner)
         heavy = owner.settings.use_heavy_model
 
-    if provider is None:
+    if not providers:
         return "Не задан LLM-ключ. Настрой в /settings → LLM."
     if not channels:
         return "Не нашёл каналов. Сначала /sync, потом помечь нужные через /news_channels."
+
+    # для embed используем первый (активный) провайдер
+    embed_provider = providers[0]
 
     posts = await _gather_posts(client, channels, hours=hours, per_channel_limit=per_channel_limit)
     if not posts:
@@ -119,7 +121,7 @@ async def build_news_digest(
 
     # embedding темы
     try:
-        topic_vec = await provider.embed(topic)
+        topic_vec = await embed_provider.embed(topic)
     except NotImplementedError:
         topic_vec = None
     except Exception:
@@ -130,24 +132,21 @@ async def build_news_digest(
         scored: list[tuple[float, dict]] = []
         for p in posts:
             try:
-                v = await provider.embed(p["text"][:1500])
+                v = await embed_provider.embed(p["text"][:1500])
                 scored.append((_cosine(topic_vec, v), p))
             except Exception:
                 continue
         scored.sort(key=lambda x: x[0], reverse=True)
-        # отсекаем шум: оставляем хотя бы топ-N с положительным сходством
         relevant = [p for s, p in scored if s > 0.15][:top_k]
         if not relevant:
             relevant = [p for _, p in scored[:top_k]]
     else:
-        # без embeddings — простая фильтрация по вхождению ключевых слов
         kw = topic.lower().split()
         relevant = [
             p for p in posts
             if any(k in p["text"].lower() for k in kw)
         ][:top_k] or posts[:top_k]
 
-    # формируем выжимку для LLM
     lines = []
     for p in relevant:
         when = p["date"].strftime("%Y-%m-%d %H:%M") if p["date"] else "?"
@@ -161,12 +160,15 @@ async def build_news_digest(
         f"Каналов: {len(channels)}, релевантных постов: {len(relevant)}\n\n"
         f"Посты:\n\n{body}"
     )
-    raw = await provider.chat(
+    raw = await llm_with_fallback(
+        providers,
         [
             ChatMessage(role="system", content=NEWS_SYSTEM),
             ChatMessage(role="user", content=user_prompt),
         ],
         heavy=heavy,
+        notify_bot=notify_bot,
+        notify_chat_id=notify_chat_id,
     )
     return sanitize_html(raw)
 

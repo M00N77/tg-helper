@@ -23,7 +23,7 @@ async def cmd_digest(message: Message, command: CommandObject) -> None:
     arg = (command.args or "").strip().lower()
 
     if not arg or arg == "now":
-        text = await build_digest(message.from_user.id)
+        text = await build_digest(message.from_user.id, notify_bot=message.bot, notify_chat_id=message.chat.id)
         await message.answer(text)
         return
 

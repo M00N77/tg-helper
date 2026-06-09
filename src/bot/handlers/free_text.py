@@ -38,7 +38,7 @@ from src.db.repo import (
     upsert_contact,
 )
 from src.db.session import get_session
-from src.llm.router import build_provider
+from src.llm.router import get_provider_chain
 from src.userbot.manager import UserbotManager
 
 
@@ -309,7 +309,7 @@ async def _execute_intent(intent, message, state, userbot_manager, *, tz_name: s
     # selectin-loaded settings/api_keys доступны после закрытия сессии
     async with get_session() as session:
         owner = await get_or_create_user(session, message.from_user.id)
-        provider = await build_provider(session, owner)
+        providers = await get_provider_chain(session, owner)
         heavy = owner.settings.use_heavy_model
 
     if kind in ("create_task", "show_boards", "move_task", "update_kanban_card", "smalltalk"):
@@ -460,21 +460,19 @@ async def _execute_intent(intent, message, state, userbot_manager, *, tz_name: s
     async with get_session() as session:
         owner = await get_or_create_user(session, message.from_user.id)
         contact = await get_contact(session, owner, target.peer_id)
-        provider = await build_provider(session, owner)
-        heavy = owner.settings.use_heavy_model
 
-    if contact is None or provider is None:
+    if contact is None or not providers:
         await message.answer("Не удалось подготовить контекст.")
         return
 
     if kind == "summarize_chat":
-        text = await summarize_chat(provider, contact, messages_loaded, heavy=heavy)
+        text = await summarize_chat(providers, contact, messages_loaded, heavy=heavy, notify_bot=message.bot, notify_chat_id=message.chat.id)
         await message.answer(f"📝 <b>Саммари — {contact.display_name}</b>\n\n{text}")
 
     elif kind == "tasks_for_chat":
         items = await extract_and_save_commitments(
-            provider, user_id=owner.id, contact=contact, messages=messages_loaded,
-            chat_id=message.chat.id,
+            providers, user_id=owner.id, contact=contact, messages=messages_loaded,
+            chat_id=message.chat.id, notify_bot=message.bot, notify_chat_id=message.chat.id,
         )
         if not items:
             body = "Явных обязательств не нашёл."
@@ -490,7 +488,7 @@ async def _execute_intent(intent, message, state, userbot_manager, *, tz_name: s
 
     elif kind == "draft_reply":
         instruction = intent.get("instruction") or None
-        draft = await draft_reply(provider, contact, messages_loaded, instruction=instruction, heavy=heavy)
+        draft = await draft_reply(providers, contact, messages_loaded, instruction=instruction, heavy=heavy, notify_bot=message.bot, notify_chat_id=message.chat.id)
         payload = {"peer_id": target.peer_id, "text": draft}
         async with get_session() as session:
             owner = await get_or_create_user(session, message.from_user.id)
@@ -503,7 +501,7 @@ async def _execute_intent(intent, message, state, userbot_manager, *, tz_name: s
         )
 
     elif kind == "catchup":
-        text = await catchup(provider, contact, messages_loaded, heavy=heavy)
+        text = await catchup(providers, contact, messages_loaded, heavy=heavy, notify_bot=message.bot, notify_chat_id=message.chat.id)
         await message.answer(
             f"⏪ <b>Где мы остановились — {contact.display_name}</b>\n\n{text}"
         )
@@ -514,13 +512,13 @@ async def _find_chats_and_offer(message, client, query: str, action: str) -> Non
 
     async with get_session() as session:
         owner = await get_or_create_user(session, message.from_user.id)
-        provider = await build_provider(session, owner)
-    if provider is None:
+        providers = await get_provider_chain(session, owner)
+    if not providers:
         await message.answer("Нужен LLM-ключ (/settings → 🔑).")
         return
 
     try:
-        results = await smart_find(client, owner, provider, query, top_n=5)
+        results = await smart_find(client, owner, providers, query, top_n=5)
     except Exception:
         logger.exception("smart_find failed")
         await message.answer("❌ Поиск не удался. Попробуй ещё раз или уточни запрос.")
@@ -648,10 +646,10 @@ async def _process_text(
 ) -> None:
     async with get_session() as session:
         owner = await get_or_create_user(session, message.from_user.id)
-        provider = await build_provider(session, owner)
+        providers = await get_provider_chain(session, owner)
         tz_name = owner.settings.timezone
 
-    if provider is None:
+    if not providers:
         await message.answer(
             "Чтобы я мог понимать свободный текст — добавь LLM-ключ в /settings → 🔑 API-ключи."
         )
@@ -661,11 +659,13 @@ async def _process_text(
     history_block = ctx_store.render_history_block(message.from_user.id)
     try:
         intent = await route_intent(
-            provider, raw,
+            providers, raw,
             heavy=False,
             now_local=now_local_str,
             tz_name=tz_name,
             history_block=history_block,
+            notify_bot=message.bot,
+            notify_chat_id=message.chat.id,
         )
     except Exception:
         logger.exception("agent route_intent failed")
@@ -993,8 +993,8 @@ async def _exec_add_reminders_from_chat(intent, message, userbot_manager) -> Non
     from src.core.contact_resolver import resolve
     async with get_session() as session:
         owner = await get_or_create_user(session, message.from_user.id)
-        provider = await build_provider(session, owner)
-    if provider is None:
+        providers = await get_provider_chain(session, owner)
+    if not providers:
         await message.answer("Нужен LLM-ключ (/settings → 🔑).")
         return
 
@@ -1010,8 +1010,8 @@ async def _exec_add_reminders_from_chat(intent, message, userbot_manager) -> Non
         owner = await get_or_create_user(session, message.from_user.id)
         contact = await get_contact(session, owner, target.peer_id)
     items = await extract_and_save_commitments(
-        provider, user_id=owner.id, contact=contact, messages=msgs,
-        chat_id=message.chat.id,
+        providers, user_id=owner.id, contact=contact, messages=msgs,
+        chat_id=message.chat.id, notify_bot=message.bot, notify_chat_id=message.chat.id,
     )
     if not items:
         await message.answer("Явных обещаний в этом чате не нашёл.")

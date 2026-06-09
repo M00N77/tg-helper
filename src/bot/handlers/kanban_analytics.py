@@ -9,7 +9,7 @@ from src.bot.handlers.yougile import YouGileClient
 from src.db.repo import get_team_by_chat, get_or_create_user
 from src.db.session import get_session
 from src.llm.base import ChatMessage
-from src.llm.router import build_provider
+from src.llm.router import get_provider_chain, llm_with_fallback
 
 router = Router(name="kanban_analytics")
 
@@ -52,12 +52,12 @@ async def _analyze_sentiment(card_titles: list[str], message: Message) -> str:
     try:
         async with get_session() as session:
             owner = await get_or_create_user(session, message.from_user.id)
-            provider = await build_provider(session, owner)
-        if provider is None:
+            providers = await get_provider_chain(session, owner)
+        if not providers:
             return "😐 Анализ недоступен (нет LLM-ключа)"
-        reply = await provider.chat([
+        reply = await llm_with_fallback(providers, [
             ChatMessage(role="user", content=SENTIMENT_PROMPT.format(sample=sample)),
-        ], heavy=False)
+        ], heavy=False, notify_bot=message.bot, notify_chat_id=message.chat.id)
         return reply.strip() or "😐 Анализ недоступен"
     except Exception:
         return "😐 Анализ недоступен"
@@ -98,16 +98,16 @@ async def _assign_tasks_by_ai(
     try:
         async with get_session() as session:
             owner = await get_or_create_user(session, message.from_user.id)
-            provider = await build_provider(session, owner)
-        if provider is None:
+            providers = await get_provider_chain(session, owner)
+        if not providers:
             return 0, 0
 
-        raw = await provider.chat([
+        raw = await llm_with_fallback(providers, [
             ChatMessage(
                 role="user",
                 content=ASSIGN_PROMPT.format(users=users_text, tasks=tasks_text),
             )
-        ], heavy=False)
+        ], heavy=False, notify_bot=message.bot, notify_chat_id=message.chat.id)
     except Exception:
         return 0, 0
 

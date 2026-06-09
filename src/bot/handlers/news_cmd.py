@@ -57,7 +57,7 @@ async def cmd_news(message: Message, command: CommandObject, userbot_manager: Us
         return
 
     await message.answer(f"📰 Готовлю дайджест по «<i>{topic}</i>» за последние {hours}ч…")
-    text = await build_news_digest(client, message.from_user.id, topic, hours=hours)
+    text = await build_news_digest(client, message.from_user.id, topic, hours=hours, notify_bot=message.bot, notify_chat_id=message.chat.id)
     await message.answer(text, disable_web_page_preview=True)
 
 

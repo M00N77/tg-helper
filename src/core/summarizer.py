@@ -5,6 +5,7 @@ from src.core.style_profile import style_profile_as_prompt_hint
 from src.core.text_sanitizer import sanitize_html
 from src.db.models import Contact, Message
 from src.llm.base import ChatMessage, LLMProvider
+from src.llm.router import llm_with_fallback
 
 
 SUMMARY_SYSTEM = (
@@ -34,34 +35,41 @@ CATCHUP_SYSTEM = (
 
 
 async def summarize_chat(
-    provider: LLMProvider,
+    providers: list[LLMProvider],
     contact: Contact,
     messages: list[Message],
     *,
     heavy: bool = False,
+    notify_bot=None,
+    notify_chat_id: int | None = None,
 ) -> str:
     transcript = "\n".join(message_to_text(m) for m in messages)
     user_prompt = (
         f"Собеседник: {contact.display_name}\n\n"
         f"Переписка (последние {len(messages)} сообщений):\n{transcript}"
     )
-    raw = await provider.chat(
+    raw = await llm_with_fallback(
+        providers,
         [
             ChatMessage(role="system", content=SUMMARY_SYSTEM),
             ChatMessage(role="user", content=user_prompt),
         ],
         heavy=heavy,
+        notify_bot=notify_bot,
+        notify_chat_id=notify_chat_id,
     )
     return sanitize_html(raw)
 
 
 async def draft_reply(
-    provider: LLMProvider,
+    providers: list[LLMProvider],
     contact: Contact,
     messages: list[Message],
     *,
     instruction: str | None = None,
     heavy: bool = False,
+    notify_bot=None,
+    notify_chat_id: int | None = None,
 ) -> str:
     transcript = "\n".join(message_to_text(m) for m in messages)
     style_hint = style_profile_as_prompt_hint(contact.style_profile)
@@ -73,22 +81,27 @@ async def draft_reply(
         f"Контекст переписки:\n{transcript}\n\n"
         + (f"Инструкция: {instruction}" if instruction else "Напиши уместный ответ на последнее сообщение.")
     )
-    raw = await provider.chat(
+    raw = await llm_with_fallback(
+        providers,
         [
             ChatMessage(role="system", content=system),
             ChatMessage(role="user", content=user_prompt),
         ],
         heavy=heavy,
+        notify_bot=notify_bot,
+        notify_chat_id=notify_chat_id,
     )
     return sanitize_html(raw)
 
 
 async def catchup(
-    provider: LLMProvider,
+    providers: list[LLMProvider],
     contact: Contact,
     messages: list[Message],
     *,
     heavy: bool = False,
+    notify_bot=None,
+    notify_chat_id: int | None = None,
 ) -> str:
     transcript = "\n".join(message_to_text(m) for m in messages)
     style_hint = style_profile_as_prompt_hint(contact.style_profile)
@@ -98,11 +111,14 @@ async def catchup(
     user_prompt = (
         f"Собеседник: {contact.display_name}\n\nПоследние сообщения:\n{transcript}"
     )
-    raw = await provider.chat(
+    raw = await llm_with_fallback(
+        providers,
         [
             ChatMessage(role="system", content=system),
             ChatMessage(role="user", content=user_prompt),
         ],
         heavy=heavy,
+        notify_bot=notify_bot,
+        notify_chat_id=notify_chat_id,
     )
     return sanitize_html(raw)

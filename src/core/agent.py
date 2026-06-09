@@ -11,6 +11,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from src.llm.base import ChatMessage, LLMProvider
+from src.llm.router import llm_with_fallback
 
 
 logger = logging.getLogger(__name__)
@@ -249,13 +250,15 @@ def _safe_parse_kanban(raw: str) -> KanbanIntentResponse:
 
 
 async def route_intent(
-    provider: LLMProvider,
+    providers: list[LLMProvider],
     user_text: str,
     *,
     heavy: bool = False,
     now_local: str | None = None,
     tz_name: str | None = None,
     history_block: str | None = None,
+    notify_bot=None,
+    notify_chat_id: int | None = None,
 ) -> dict[str, Any]:
     """now_local + tz_name инжектятся в системный промпт, чтобы LLM мог парсить
     относительные даты («завтра в 18:00») в корректный UTC ISO.
@@ -272,12 +275,15 @@ async def route_intent(
         )
     if history_block:
         system = system + "\n\n" + history_block
-    raw = await provider.chat(
+    raw = await llm_with_fallback(
+        providers,
         [
             ChatMessage(role="system", content=system),
             ChatMessage(role="user", content=user_text),
         ],
         heavy=heavy,
+        notify_bot=notify_bot,
+        notify_chat_id=notify_chat_id,
     )
     return _safe_parse(raw)
 
@@ -301,12 +307,12 @@ async def process_free_text(
     from src.bot.handlers.yougile import YouGileClient
     from src.db.repo import get_or_create_user, get_team_by_chat
     from src.db.session import get_session
-    from src.llm.router import build_provider
+    from src.llm.router import get_provider_chain, llm_with_fallback
 
     async with get_session() as session:
         owner = await get_or_create_user(session, user_id)
-        provider = await build_provider(session, owner)
-        if provider is None:
+        providers = await get_provider_chain(session, owner)
+        if not providers:
             return "🔑 Нужен LLM-ключ. Добавь в /settings → 🔑 API-ключи."
         team = await get_team_by_chat(session, chat_id)
 
@@ -314,7 +320,7 @@ async def process_free_text(
     if not team or not team.kanban_token or not board_id:
         return "⚠️ Доска для задач не выбрана. Пожалуйста, выберите нужную доску в настройках команды, чтобы я мог создавать карточки."
 
-    raw = await provider.chat([
+    raw = await llm_with_fallback(providers, [
         ChatMessage(role="system", content=KANBAN_AGENT_SYSTEM),
         ChatMessage(role="user", content=text),
     ])

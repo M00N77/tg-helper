@@ -28,7 +28,7 @@ from src.db.repo import (
 )
 from src.db.session import get_session
 from src.llm.base import ChatMessage
-from src.llm.router import build_provider
+from src.llm.router import get_provider_chain, llm_with_fallback
 
 
 logger = logging.getLogger(__name__)
@@ -85,12 +85,10 @@ async def _build_reply_text(
 ) -> str | None:
     async with get_session() as session:
         owner = await get_or_create_user(session, owner_telegram_id)
-        provider = await build_provider(session, owner)
-        contact = await get_contact(session, owner, peer_id)
+        providers = await get_provider_chain(session, owner)
         heavy = owner.settings.use_heavy_model
 
-    if provider is None:
-        logger.warning("auto-reply: no LLM provider configured")
+    if not providers:
         return None
 
     # подгружаем контекст последних сообщений
@@ -115,15 +113,16 @@ async def _build_reply_text(
         "Сформируй ответ от моего имени."
     )
     try:
-        return await provider.chat(
+        return await llm_with_fallback(
+            providers,
             [
                 ChatMessage(role="system", content=system),
                 ChatMessage(role="user", content=user_prompt),
             ],
             heavy=heavy,
         )
-    except Exception:
-        logger.exception("auto-reply: LLM call failed")
+    except RuntimeError:
+        logger.exception("auto-reply: all LLM providers failed")
         return None
 
 

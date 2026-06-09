@@ -13,6 +13,7 @@ from src.db.repo import (
 )
 from src.db.session import get_session
 from src.llm.base import ChatMessage, LLMProvider
+from src.llm.router import llm_with_fallback
 
 
 logger = logging.getLogger(__name__)
@@ -50,10 +51,12 @@ def _parse_json_safe(text: str) -> dict:
 
 
 async def build_style_profile(
-    provider: LLMProvider,
+    providers: list[LLMProvider],
     *,
     contact_label: str,
     my_messages_text: str,
+    notify_bot=None,
+    notify_chat_id: int | None = None,
 ) -> dict:
     if not my_messages_text.strip():
         return {}
@@ -63,22 +66,27 @@ async def build_style_profile(
         f"{my_messages_text}\n\n"
         "Сформируй JSON-профиль моего стиля общения с этим собеседником."
     )
-    raw = await provider.chat(
+    raw = await llm_with_fallback(
+        providers,
         [
             ChatMessage(role="system", content=STYLE_SYSTEM),
             ChatMessage(role="user", content=user_prompt),
         ],
         heavy=False,
+        notify_bot=notify_bot,
+        notify_chat_id=notify_chat_id,
     )
     return _parse_json_safe(raw)
 
 
 async def update_style_profile_for_contact(
-    provider: LLMProvider,
+    providers: list[LLMProvider],
     owner_telegram_id: int,
     peer_id: int,
     *,
     sample_size: int = 80,
+    notify_bot=None,
+    notify_chat_id: int | None = None,
 ) -> dict | None:
     async with get_session() as session:
         owner: User = await get_or_create_user(session, owner_telegram_id)
@@ -90,9 +98,11 @@ async def update_style_profile_for_contact(
 
     text = "\n".join(message_to_text(m) for m in my_msgs)
     profile = await build_style_profile(
-        provider,
+        providers,
         contact_label=contact.display_name,
         my_messages_text=text,
+        notify_bot=notify_bot,
+        notify_chat_id=notify_chat_id,
     )
     if not profile:
         return None

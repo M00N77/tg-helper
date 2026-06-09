@@ -7,7 +7,7 @@ from src.core.contact_resolver import resolve
 from src.core.style_profile import update_style_profile_for_contact
 from src.db.repo import get_or_create_user
 from src.db.session import get_session
-from src.llm.router import build_provider
+from src.llm.router import get_provider_chain
 from src.userbot.manager import UserbotManager
 
 
@@ -28,9 +28,9 @@ async def cmd_style(message: Message, command: CommandObject, userbot_manager: U
 
     async with get_session() as session:
         owner = await get_or_create_user(session, message.from_user.id)
-        provider = await build_provider(session, owner)
+        providers = await get_provider_chain(session, owner)
 
-    if provider is None:
+    if not providers:
         await message.answer("Сначала добавь LLM-ключ в /settings.")
         return
 
@@ -39,7 +39,7 @@ async def cmd_style(message: Message, command: CommandObject, userbot_manager: U
         await message.answer("Контакт не найден.")
         return
     target = candidates[0]
-    profile = await update_style_profile_for_contact(provider, message.from_user.id, target.peer_id)
+    profile = await update_style_profile_for_contact(providers, message.from_user.id, target.peer_id, notify_bot=message.bot, notify_chat_id=message.chat.id)
     if not profile:
         await message.answer(
             f"Не нашёл достаточно моих сообщений к <b>{target.label()}</b>. "
