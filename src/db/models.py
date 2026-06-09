@@ -229,6 +229,8 @@ class Team(Base):
     kanban_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     kanban_board_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     kanban_provider: Mapped[str | None] = mapped_column(Text, nullable=True, default="yougile")
+    active_board_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    active_board_name: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     meetings: Mapped[list["Meeting"]] = relationship(back_populates="team")
