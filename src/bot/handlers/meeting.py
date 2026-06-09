@@ -40,7 +40,7 @@ from src.db.repo import (
     update_meeting_transcript,
 )
 from src.db.session import get_session
-from src.llm.router import build_provider
+from src.llm.router import get_provider_chain, llm_with_fallback
 from src.llm.base import ChatMessage
 from src.bot.handlers.yougile import YouGileClient
 from src.config import settings as app_settings
@@ -213,9 +213,9 @@ async def handle_meeting_file(message: Message, state: FSMContext):
 
         async with get_session() as session:
             owner = await get_or_create_user(session, message.from_user.id)
-            provider = await build_provider(session, owner)
+            providers = await get_provider_chain(session, owner)
 
-        if provider is None:
+        if not providers:
             await notice.edit_text(
                 f"✅ Транскрипция готова:\n\n{transcript[:1000]}…\n\n"
                 "⚠️ Добавь LLM-ключ в /settings чтобы извлечь задачи."
@@ -235,12 +235,15 @@ async def handle_meeting_file(message: Message, state: FSMContext):
 
         await notice.edit_text("🤖 Анализирую встречу…")
         try:
-            raw = await provider.chat(
+            raw = await llm_with_fallback(
+                providers,
                 [
                     ChatMessage(role="system", content=MEETING_EXTRACT_SYSTEM),
                     ChatMessage(role="user", content=f"Транскрипция:\n\n{transcript[:8000]}"),
                 ],
                 heavy=True,
+                notify_bot=message.bot,
+                notify_chat_id=message.chat.id,
             )
             data = json.loads(raw.strip().strip("```").lstrip("json").strip())
             summary = data.get("summary", "")

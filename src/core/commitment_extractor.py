@@ -8,6 +8,7 @@ from src.db.models import Contact, Message
 from src.db.repo import add_commitment
 from src.db.session import get_session
 from src.llm.base import ChatMessage, LLMProvider
+from src.llm.router import llm_with_fallback
 
 
 logger = logging.getLogger(__name__)
@@ -53,12 +54,14 @@ def _parse_iso(value) -> datetime | None:
 
 
 async def extract_and_save_commitments(
-    provider: LLMProvider,
+    providers: list[LLMProvider],
     *,
     user_id: int,
     contact: Contact,
     messages: list[Message],
     chat_id: int | None = None,
+    notify_bot=None,
+    notify_chat_id: int | None = None,
 ) -> list[dict]:
     if not messages:
         return []
@@ -71,12 +74,15 @@ async def extract_and_save_commitments(
         "Выдели обязательства."
     )
 
-    raw = await provider.chat(
+    raw = await llm_with_fallback(
+        providers,
         [
             ChatMessage(role="system", content=COMMITMENTS_SYSTEM),
             ChatMessage(role="user", content=user_prompt),
         ],
         heavy=False,
+        notify_bot=notify_bot,
+        notify_chat_id=notify_chat_id,
     )
     items = _parse_json_array(raw)
     if not items:

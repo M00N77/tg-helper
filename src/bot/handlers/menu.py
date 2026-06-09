@@ -483,7 +483,7 @@ async def cb_menu_news_now(callback: CallbackQuery, userbot_manager: UserbotMana
 
     for t in topics:
         msg = await callback.message.answer(f"📰 Готовлю дайджест по «<i>{t.topic}</i>» (окно {t.hours}ч)…")
-        text = await build_news_digest(client, callback.from_user.id, t.topic, hours=t.hours)
+        text = await build_news_digest(client, callback.from_user.id, t.topic, hours=t.hours, notify_bot=callback.bot, notify_chat_id=callback.message.chat.id)
         await msg.edit_text(text, disable_web_page_preview=True)
 
 

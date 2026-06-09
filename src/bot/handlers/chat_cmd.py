@@ -14,7 +14,7 @@ from src.core.contact_resolver import ContactCandidate, resolve
 from src.core.summarizer import catchup, draft_reply, summarize_chat
 from src.db.repo import get_contact, get_or_create_user
 from src.db.session import get_session
-from src.llm.router import build_provider
+from src.llm.router import get_provider_chain
 from src.userbot.manager import UserbotManager
 
 
@@ -130,20 +130,20 @@ async def _action_load(callback: CallbackQuery, userbot_manager: UserbotManager,
     async with get_session() as session:
         owner = await get_or_create_user(session, callback.from_user.id)
         contact = await get_contact(session, owner, peer_id)
-        provider = await build_provider(session, owner)
+        providers = await get_provider_chain(session, owner)
         heavy = owner.settings.use_heavy_model
 
     if contact is None:
         if callback.message:
             await callback.message.edit_text("Контакт не найден в локальной БД. Попробуй /sync.")
         return None
-    if provider is None:
+    if not providers:
         if callback.message:
             await callback.message.edit_text(
                 "Не задан API-ключ выбранного LLM. Добавь в /settings."
             )
         return None
-    return client, owner, contact, messages, provider, heavy
+    return client, owner, contact, messages, providers, heavy
 
 
 @router.callback_query(F.data.startswith("chat:summary:"))
@@ -152,9 +152,9 @@ async def cb_summary(callback: CallbackQuery, userbot_manager: UserbotManager) -
     bundle = await _action_load(callback, userbot_manager, peer_id)
     if bundle is None:
         return
-    _client, _owner, contact, messages, provider, heavy = bundle
+    _client, _owner, contact, messages, providers, heavy = bundle
 
-    text = await summarize_chat(provider, contact, messages, heavy=heavy)
+    text = await summarize_chat(providers, contact, messages, heavy=heavy, notify_bot=callback.bot, notify_chat_id=callback.message.chat.id if callback.message else None)
     if callback.message:
         await callback.message.edit_text(
             f"📝 <b>Саммари — {contact.display_name}</b>\n\n{text}",
@@ -168,14 +168,16 @@ async def cb_tasks(callback: CallbackQuery, userbot_manager: UserbotManager) -> 
     bundle = await _action_load(callback, userbot_manager, peer_id)
     if bundle is None:
         return
-    _client, owner, contact, messages, provider, _heavy = bundle
+    _client, owner, contact, messages, providers, _heavy = bundle
 
     items = await extract_and_save_commitments(
-        provider,
+        providers,
         user_id=owner.id,
         contact=contact,
         messages=messages,
-        chat_id=message.chat.id,
+        chat_id=callback.message.chat.id if callback.message else None,
+        notify_bot=callback.bot,
+        notify_chat_id=callback.message.chat.id if callback.message else None,
     )
 
     if not items:
@@ -202,9 +204,9 @@ async def cb_draft(callback: CallbackQuery, userbot_manager: UserbotManager) -> 
     bundle = await _action_load(callback, userbot_manager, peer_id)
     if bundle is None:
         return
-    _client, _owner, contact, messages, provider, heavy = bundle
+    _client, _owner, contact, messages, providers, heavy = bundle
 
-    draft = await draft_reply(provider, contact, messages, heavy=heavy)
+    draft = await draft_reply(providers, contact, messages, heavy=heavy, notify_bot=callback.bot, notify_chat_id=callback.message.chat.id if callback.message else None)
     payload = {"peer_id": peer_id, "text": draft}
 
     from src.db.repo import create_pending_action
@@ -233,9 +235,9 @@ async def cb_catchup(callback: CallbackQuery, userbot_manager: UserbotManager) -
     bundle = await _action_load(callback, userbot_manager, peer_id)
     if bundle is None:
         return
-    _client, _owner, contact, messages, provider, heavy = bundle
+    _client, _owner, contact, messages, providers, heavy = bundle
 
-    text = await catchup(provider, contact, messages, heavy=heavy)
+    text = await catchup(providers, contact, messages, heavy=heavy, notify_bot=callback.bot, notify_chat_id=callback.message.chat.id if callback.message else None)
     if callback.message:
         await callback.message.edit_text(
             f"⏪ <b>Где мы остановились — {contact.display_name}</b>\n\n{text}",

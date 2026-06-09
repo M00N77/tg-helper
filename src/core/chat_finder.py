@@ -19,6 +19,7 @@ from src.db.models import Contact, User
 from src.db.repo import fts_search, list_contacts
 from src.db.session import get_session
 from src.llm.base import ChatMessage, LLMProvider
+from src.llm.router import llm_with_fallback
 
 
 logger = logging.getLogger(__name__)
@@ -74,8 +75,9 @@ def _safe_json(text: str) -> Any:
         return None
 
 
-async def _expand_keywords(provider: LLMProvider, query: str) -> list[str]:
-    raw = await provider.chat(
+async def _expand_keywords(providers: list[LLMProvider], query: str) -> list[str]:
+    raw = await llm_with_fallback(
+        providers,
         [
             ChatMessage(role="system", content=_EXPAND_SYS),
             ChatMessage(role="user", content=query),
@@ -101,7 +103,7 @@ async def _expand_keywords(provider: LLMProvider, query: str) -> list[str]:
     return cleaned[:12]
 
 
-async def _classify_contacts(provider: LLMProvider, query: str, contacts: list[Contact]) -> dict[int, int]:
+async def _classify_contacts(providers: list[LLMProvider], query: str, contacts: list[Contact]) -> dict[int, int]:
     if not contacts:
         return {}
     # Готовим компактный список для LLM (peer_id, name, kind)
@@ -111,7 +113,8 @@ async def _classify_contacts(provider: LLMProvider, query: str, contacts: list[C
         items.append({"peer_id": c.peer_id, "name": c.display_name, "kind": kind})
     payload = json.dumps({"topic": query, "contacts": items}, ensure_ascii=False)
 
-    raw = await provider.chat(
+    raw = await llm_with_fallback(
+        providers,
         [
             ChatMessage(role="system", content=_CLASSIFY_SYS),
             ChatMessage(role="user", content=payload),
@@ -211,20 +214,20 @@ async def _telegram_keyword_search(
 async def smart_find(
     client: TelegramClient,
     owner: User,
-    provider: LLMProvider,
+    providers: list[LLMProvider],
     query: str,
     *,
     top_n: int = 5,
     per_kw_limit: int = 20,
 ) -> list[FoundChat]:
-    keywords = await _expand_keywords(provider, query)
+    keywords = await _expand_keywords(providers, query)
 
     async with get_session() as session:
         contacts = await list_contacts(session, owner)
     contact_by_pid = {c.peer_id: c for c in contacts}
 
     local_task = _local_keyword_search(owner, keywords, contact_by_pid, per_kw_limit=per_kw_limit)
-    name_task = _classify_contacts(provider, query, contacts)
+    name_task = _classify_contacts(providers, query, contacts)
     local_hits, name_scores = await asyncio.gather(local_task, name_task)
 
     if not local_hits:

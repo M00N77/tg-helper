@@ -7,9 +7,7 @@ from aiogram.types import Message
 from src.db.repo import get_or_create_user, list_contacts, fetch_my_messages_in_chat
 from src.db.session import get_session
 from src.llm.base import ChatMessage
-from src.llm.router import build_provider
-from src.llm.openai_provider import OpenAIProvider
-from src.llm.gemini_provider import GeminiProvider
+from src.llm.router import get_provider_chain, llm_with_fallback
 
 logger = logging.getLogger(__name__)
 router = Router(name="burnout")
@@ -38,35 +36,17 @@ BURNOUT_PROMPT = """Ты психолог-аналитик. Проанализи
 Будь конкретным и опирайся только на текст сообщений."""
 
 
-async def _llm_burnout(messages_text: str, provider, session, owner) -> str:
-    from src.llm.router import build_provider
-    from src.llm.base import ChatMessage
-
+async def _llm_burnout(messages_text: str, providers: list, message: Message) -> str:
     prompt = BURNOUT_PROMPT.format(messages=messages_text)
     msgs = [ChatMessage(role="user", content=prompt)]
 
-    # Try 1 — основной провайдер
     try:
-        return await provider.chat(msgs, heavy=False)
-    except Exception as e1:
-        logger.warning("Burnout attempt 1 failed: %s", e1)
-
-    # Try 2 — тот же провайдер ещё раз
-    try:
-        return await provider.chat(msgs, heavy=False)
-    except Exception as e2:
-        logger.warning("Burnout attempt 2 failed: %s", e2)
-
-    # Try 3 — переключиться на другой провайдер
-    try:
-        current = owner.settings.llm_provider
-        owner.settings.llm_provider = "openai" if current == "gemini" else "gemini"
-        fallback = await build_provider(session, owner)
-        owner.settings.llm_provider = current  # вернуть обратно
-        if fallback:
-            return await fallback.chat(msgs, heavy=False)
-    except Exception as e3:
-        logger.warning("Burnout fallback failed: %s", e3)
+        return await llm_with_fallback(
+            providers, msgs, heavy=False,
+            notify_bot=message.bot, notify_chat_id=message.chat.id,
+        )
+    except RuntimeError:
+        pass
 
     return "❌ Все LLM недоступны, попробуй позже"
 
@@ -82,9 +62,9 @@ async def cmd_burnout(message: Message) -> None:
         owner = await get_or_create_user(session, message.from_user.id)
         contacts = await list_contacts(session, owner, kinds=("user",))
 
-        async with get_session() as session:
-            owner2 = await get_or_create_user(session, message.from_user.id)
-            provider = await build_provider(session, owner2)
+    async with get_session() as session:
+        owner2 = await get_or_create_user(session, message.from_user.id)
+        providers = await get_provider_chain(session, owner2)
 
     all_messages = []
     if contacts:
@@ -117,12 +97,10 @@ async def cmd_burnout(message: Message) -> None:
         ]
 
     sample = "\n---\n".join(all_messages[:50])
-    if provider is None:
+    if not providers:
         await wait.edit_text("❌ Нет LLM-ключа — добавь в /settings → 🔑")
         return
-    async with get_session() as session:
-        owner3 = await get_or_create_user(session, message.from_user.id)
-        result = await _llm_burnout(sample, provider, session, owner3)
+    result = await _llm_burnout(sample, providers, message)
 
     await wait.edit_text(
         f"🧠 <b>Анализ эмоционального состояния</b>\n\n{result}",
