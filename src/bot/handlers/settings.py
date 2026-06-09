@@ -53,7 +53,7 @@ async def _render_menu(telegram_id: int) -> tuple[str, InlineKeyboardMarkup]:
         f"🛡 Игнорировать архив: {_check(s.ignore_archived)}\n"
         f"🤖 LLM: <b>{s.llm_provider}</b> · {'тяжёлая' if s.use_heavy_model else 'лёгкая'}\n"
         f"🎤 Транскрипция: <b>{s.transcription_mode}</b>\n"
-        f"🔑 Ключи: OpenAI {_check(bool(openai_key))} · Gemini {_check(bool(gemini_key))} · GigaChat {_check(bool(gigachat_key))}\n\n"
+        f"🔑 Ключи: OpenAI {_check(bool(openai_key))} · Gemini {_check(bool(gemini_key))} · GigaChat {_check(bool(gigachat_key))} · Groq {_check(bool(groq_key))}\n\n"
         "<i>Тапни раздел, чтобы открыть его настройки и описание.</i>"
     )
     kb = InlineKeyboardBuilder()

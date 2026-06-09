@@ -15,6 +15,7 @@ from telethon.errors import (
 )
 
 from src.bot.filters import OwnerOnly
+from src.bot.lexicon import L
 from src.bot.states import LoginStates
 from src.db.repo import (
     delete_telegram_session,
@@ -121,23 +122,23 @@ async def step_phone(message: Message, state: FSMContext, userbot_manager: Userb
     except PhoneNumberInvalidError:
         await userbot_manager.cancel_pending(message.from_user.id)
         await state.clear()
-        await message.answer("❌ Telegram сказал: неверный номер. Запусти /login заново.")
+        await message.answer(L.ERR_LOGIN_PHONE)
         return
     except ApiIdInvalidError:
         await userbot_manager.cancel_pending(message.from_user.id)
         await state.clear()
-        await message.answer("❌ api_id/api_hash неверны. Запусти /login заново.")
+        await message.answer(L.ERR_LOGIN_API)
         return
     except FloodWaitError as e:
         await userbot_manager.cancel_pending(message.from_user.id)
         await state.clear()
-        await message.answer(f"❌ FloodWait: подожди {e.seconds} секунд и попробуй /login снова.")
+        await message.answer(L.ERR_LOGIN_FLOOD.format(seconds=e.seconds))
         return
     except Exception:
         logger.exception("send_code_request failed")
         await userbot_manager.cancel_pending(message.from_user.id)
         await state.clear()
-        await message.answer("❌ Не удалось отправить код. Запусти /login заново.")
+        await message.answer(L.ERR_LOGIN_CODE_SEND)
         return
 
     await state.set_state(LoginStates.code)
@@ -159,7 +160,7 @@ async def step_code(message: Message, state: FSMContext, userbot_manager: Userbo
     pending = userbot_manager.get_pending(message.from_user.id)
     if pending is None:
         await state.clear()
-        await message.answer("Сессия логина потерялась. Начни заново через /login.")
+        await message.answer(L.ERR_LOGIN_SESSION_LOST)
         return
 
     try:
@@ -176,18 +177,18 @@ async def step_code(message: Message, state: FSMContext, userbot_manager: Userbo
         )
         return
     except PhoneCodeInvalidError:
-        await message.answer("❌ Неверный код. Попробуй ещё раз или /cancel.")
+        await message.answer(L.ERR_LOGIN_CODE_INVALID)
         return
     except PhoneCodeExpiredError:
         await userbot_manager.cancel_pending(message.from_user.id)
         await state.clear()
-        await message.answer("❌ Код истёк. Запусти /login заново.")
+        await message.answer(L.ERR_LOGIN_CODE_EXPIRED)
         return
     except Exception:
         logger.exception("sign_in failed")
         await userbot_manager.cancel_pending(message.from_user.id)
         await state.clear()
-        await message.answer("❌ Не удалось войти. Запусти /login заново.")
+        await message.answer(L.ERR_LOGIN_GENERIC)
         return
 
     await _finalize_login(message, state, userbot_manager)
@@ -203,19 +204,19 @@ async def step_2fa(message: Message, state: FSMContext, userbot_manager: Userbot
     pending = userbot_manager.get_pending(message.from_user.id)
     if pending is None:
         await state.clear()
-        await message.answer("Сессия логина потерялась. Начни заново через /login.")
+        await message.answer(L.ERR_LOGIN_SESSION_LOST)
         return
 
     try:
         await pending.client.sign_in(password=password)
     except PasswordHashInvalidError:
-        await message.answer("❌ Неверный 2FA-пароль. Попробуй ещё раз или /cancel.")
+        await message.answer(L.ERR_LOGIN_2FA)
         return
     except Exception:
         logger.exception("2FA sign_in failed")
         await userbot_manager.cancel_pending(message.from_user.id)
         await state.clear()
-        await message.answer("❌ Не удалось войти. Запусти /login заново.")
+        await message.answer(L.ERR_LOGIN_GENERIC)
         return
 
     # Удалим сообщение с паролем — гигиена.
@@ -232,7 +233,7 @@ async def _finalize_login(message: Message, state: FSMContext, userbot_manager: 
     pending = userbot_manager.clear_pending(tg_id)
     if pending is None:
         await state.clear()
-        await message.answer("Что-то пошло не так. Запусти /login заново.")
+        await message.answer(L.ERR_LOGIN_GENERIC)
         return
 
     me = await pending.client.get_me()
@@ -254,7 +255,4 @@ async def _finalize_login(message: Message, state: FSMContext, userbot_manager: 
 
     userbot_manager.register_client(tg_id, pending.client)
     await state.clear()
-    await message.answer(
-        f"✅ Аккаунт <b>{label}</b> подключён. Сессия сохранена в зашифрованном виде.\n\n"
-        "Дальше — /settings, чтобы выбрать LLM и настроить авто-ответ."
-    )
+    await message.answer(L.SUCCESS_LOGIN.format(label=label))

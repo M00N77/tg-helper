@@ -6,7 +6,7 @@ from pathlib import Path
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
-from aiogram.types import InlineKeyboardButton, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from src.bot.filters import OwnerOnly
@@ -38,6 +38,8 @@ from src.db.repo import (
     upsert_contact,
 )
 from src.db.session import get_session
+from src.bot.lexicon import L
+from src.bot.states import TaskCreationStates
 from src.llm.router import get_provider_chain
 from src.userbot.manager import UserbotManager
 
@@ -324,11 +326,7 @@ async def _execute_intent(intent, message, state, userbot_manager, *, tz_name: s
         return
 
     if kind == "unknown" or kind is None:
-        await message.answer(
-            "Не понял, что нужно сделать. Я умею: писать сообщения людям, делать саммари переписок, "
-            "извлекать задачи, ловить «где мы остановились», искать по сообщениям, собирать новостной "
-            "дайджест по теме, показывать обещания. Попробуй сформулировать иначе или открой /help."
-        )
+        await message.answer(L.INTENT_UNKNOWN)
         return
 
     if kind == "list_todos":
@@ -336,7 +334,7 @@ async def _execute_intent(intent, message, state, userbot_manager, *, tz_name: s
             owner = await get_or_create_user(session, message.from_user.id)
             items = await list_open_commitments(session, owner)
         if not items:
-            await message.answer("Открытых обязательств нет 🎉")
+            await message.answer(L.STATUS_EMPTY_TODOS)
             return
         from src.core.timeutil import fmt_local
         lines = []
@@ -669,7 +667,7 @@ async def _process_text(
         )
     except Exception:
         logger.exception("agent route_intent failed")
-        await message.answer("Не получилось разобрать запрос (LLM ошибся).")
+        await message.answer(L.ERR_LLM_FAIL)
         return
 
     if intent.get("intent") == "multi":
@@ -727,6 +725,34 @@ def _summarize_intent_for_memory(intent: dict) -> str:
     return kind or ""
 
 
+def _extract_tasks_from_intent(intent: dict) -> list[dict]:
+    kind = intent.get("intent")
+    if kind == "create_task":
+        return [{
+            "title": intent.get("title", ""),
+            "description": intent.get("description", ""),
+            "deadline": intent.get("deadline"),
+        }]
+    if kind == "multi":
+        result = []
+        for act in intent.get("actions") or []:
+            if act.get("intent") == "create_task":
+                result.append({
+                    "title": act.get("title", ""),
+                    "description": act.get("description", ""),
+                    "deadline": act.get("deadline"),
+                })
+        return result
+    return []
+
+
+@router.message(TaskCreationStates.waiting_for_board, F.text)
+async def catch_while_waiting_board(message: Message, state: FSMContext) -> None:
+    await message.answer(
+        "Пожалуйста, выберите доску для предыдущих задач или нажмите «Отмена»."
+    )
+
+
 @router.message(F.text & ~F.text.startswith("/"))
 async def free_text(
     message: Message,
@@ -747,7 +773,8 @@ async def free_voice(
     state: FSMContext,
     userbot_manager: UserbotManager,
 ) -> None:
-    if await state.get_state() is not None:
+    current_state = await state.get_state()
+    if current_state is not None and current_state != TaskCreationStates.waiting_for_board:
         return
 
     media = message.voice or message.audio
@@ -775,7 +802,7 @@ async def free_voice(
     except Exception:
         logger.exception("voice transcription failed")
         try:
-            await notice.edit_text("❌ Не удалось распознать голосовое.")
+            await notice.edit_text(L.ERR_VOICE_FAIL)
         except Exception:
             pass
         return
@@ -793,7 +820,162 @@ async def free_voice(
     except Exception:
         pass
 
-    await _process_text(text, message, state, userbot_manager)
+    async with get_session() as session:
+        owner = await get_or_create_user(session, message.from_user.id)
+        providers = await get_provider_chain(session, owner)
+        tz_name = owner.settings.timezone
+
+    if not providers:
+        await message.answer(
+            "Чтобы я мог понимать свободный текст — добавь LLM-ключ в /settings → 🔑 API-ключи."
+        )
+        return
+
+    now_local_str = now_in_tz(tz_name).strftime("%Y-%m-%d %H:%M")
+    history_block = ctx_store.render_history_block(message.from_user.id)
+    try:
+        intent = await route_intent(
+            providers, text,
+            heavy=False,
+            now_local=now_local_str,
+            tz_name=tz_name,
+            history_block=history_block,
+            notify_bot=message.bot,
+            notify_chat_id=message.chat.id,
+        )
+    except Exception:
+        logger.exception("agent route_intent failed")
+        try:
+            await notice.edit_text(L.ERR_LLM_FAIL)
+        except Exception:
+            pass
+        return
+
+    raw_tasks = _extract_tasks_from_intent(intent)
+
+    if raw_tasks:
+        async with get_session() as session:
+            team = await get_team_by_chat(session, message.chat.id)
+
+        if not team or not team.kanban_token:
+            try:
+                await notice.edit_text("⚠️ Канбан не подключён. Используй /kanban.")
+            except Exception:
+                pass
+            return
+
+        from src.bot.handlers.yougile import YouGileClient
+        client = YouGileClient(team.kanban_token)
+        try:
+            boards = await client.get_boards()
+        except Exception as e:
+            try:
+                await notice.edit_text(f"❌ Ошибка при получении досок: {e}")
+            except Exception:
+                pass
+            return
+
+        if not boards:
+            try:
+                await notice.edit_text("❌ В YouGile нет ни одной доски.")
+            except Exception:
+                pass
+            return
+
+        board_refs = [(b["id"], b["title"]) for b in boards]
+        new_tasks = [{
+            "title": t.get("title", ""),
+            "description": t.get("description", ""),
+            "deadline": t.get("deadline"),
+        } for t in raw_tasks]
+
+        # --- ACCUMULATION: voice while waiting_for_board ---
+        if current_state == TaskCreationStates.waiting_for_board:
+            state_data = await state.get_data()
+            existing_tasks = state_data.get("tasks", [])
+            existing_tasks.extend(new_tasks)
+            source_msg_id = state_data.get("source_message_id")
+            existing_board_refs = state_data.get("board_refs", board_refs)
+
+            await state.update_data(tasks=existing_tasks)
+
+            kb = InlineKeyboardBuilder()
+            for idx, b in enumerate(existing_board_refs):
+                kb.row(InlineKeyboardButton(
+                    text=b[1],
+                    callback_data=f"tv:{idx}",
+                ))
+            kb.row(InlineKeyboardButton(
+                text="❌ Отмена",
+                callback_data="tv:cancel",
+            ))
+
+            task_lines = "\n".join(f"• {t['title']}" for t in existing_tasks[:5])
+            extra = f"\n… и ещё {len(existing_tasks) - 5}" if len(existing_tasks) > 5 else ""
+
+            try:
+                await message.bot.edit_message_text(
+                    chat_id=message.chat.id,
+                    message_id=source_msg_id,
+                    text=f"📋 Найдено задач ({len(existing_tasks)}):\n{task_lines}{extra}\n\n"
+                         f"Выбери доску для сохранения:",
+                    reply_markup=kb.as_markup(),
+                )
+            except Exception:
+                pass
+
+            summary = _summarize_intent_for_memory(intent)
+            ctx_store.add_turn(message.from_user.id, text, summary)
+            return
+
+        # --- NORMAL FLOW (first voice) ---
+        await state.update_data(
+            tasks=new_tasks,
+            board_refs=board_refs,
+        )
+        await state.set_state(TaskCreationStates.waiting_for_board)
+
+        kb = InlineKeyboardBuilder()
+        for idx, b in enumerate(boards):
+            kb.row(InlineKeyboardButton(
+                text=b["title"],
+                callback_data=f"tv:{idx}",
+            ))
+        kb.row(InlineKeyboardButton(
+            text="❌ Отмена",
+            callback_data="tv:cancel",
+        ))
+
+        task_lines = "\n".join(f"• {t['title']}" for t in new_tasks[:5])
+        extra = f"\n… и ещё {len(new_tasks) - 5}" if len(new_tasks) > 5 else ""
+        sent = await message.answer(
+            f"📋 Найдено задач ({len(new_tasks)}):\n{task_lines}{extra}\n\n"
+            f"Выбери доску для сохранения:",
+            reply_markup=kb.as_markup(),
+        )
+
+        await state.update_data(source_message_id=sent.message_id)
+
+        summary = _summarize_intent_for_memory(intent)
+        ctx_store.add_turn(message.from_user.id, text, summary)
+        return
+
+    if current_state == TaskCreationStates.waiting_for_board:
+        try:
+            await notice.edit_text("❌ Не удалось извлечь задачи. Попробуйте ещё раз.")
+        except Exception:
+            pass
+        return
+
+    if intent.get("intent") == "multi":
+        actions = intent.get("actions") or []
+        for sub in actions:
+            await _dispatch(sub, message, state, userbot_manager, tz_name=tz_name)
+    else:
+        await _dispatch(intent, message, state, userbot_manager, tz_name=tz_name)
+
+    summary = _summarize_intent_for_memory(intent)
+    ctx_store.add_turn(message.from_user.id, text, summary)
 
 
 async def _dispatch(intent, message, state, userbot_manager, *, tz_name: str) -> None:
@@ -1026,3 +1208,91 @@ async def _exec_add_reminders_from_chat(intent, message, userbot_manager) -> Non
         f"⏰ Поставил {len(items)} напоминаний из чата с {target.display_name}:\n\n"
         + "\n".join(lines)
     )
+
+
+@router.callback_query(TaskCreationStates.waiting_for_board, F.data.startswith("tv:"))
+async def cb_voice_board_select(callback: CallbackQuery, state: FSMContext) -> None:
+    parts = callback.data.split(":")
+    if len(parts) != 2:
+        await callback.answer("❌ Некорректный запрос", show_alert=True)
+        return
+
+    action = parts[1]
+    if action == "cancel":
+        await state.clear()
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await callback.answer()
+        return
+
+    try:
+        idx = int(action)
+    except ValueError:
+        await callback.answer("❌ Некорректный запрос", show_alert=True)
+        return
+
+    state_data = await state.get_data()
+    tasks = state_data.get("tasks", [])
+    board_refs = state_data.get("board_refs", [])
+
+    if not tasks or not board_refs:
+        await callback.answer("❌ Данные не найдены. Попробуйте снова.", show_alert=True)
+        await state.clear()
+        return
+
+    if idx < 0 or idx >= len(board_refs):
+        await callback.answer("❌ Доска не найдена", show_alert=True)
+        return
+
+    board_id, board_name = board_refs[idx]
+
+    async with get_session() as session:
+        team = await get_team_by_chat(session, callback.message.chat.id)
+
+    if not team or not team.kanban_token:
+        await callback.answer("❌ Канбан не подключён", show_alert=True)
+        return
+
+    from src.bot.handlers.yougile import YouGileClient
+
+    client = YouGileClient(team.kanban_token, board_id)
+    try:
+        columns = await client.get_columns()
+    except Exception as e:
+        await callback.answer(f"❌ Ошибка колонок: {e}", show_alert=True)
+        return
+
+    first_col_id = columns[0]["id"] if columns else None
+    if not first_col_id:
+        await callback.answer("❌ На доске нет колонок", show_alert=True)
+        return
+
+    created = 0
+    errors = 0
+    for task in tasks:
+        title = (task.get("title") or "").strip()
+        if not title:
+            continue
+        try:
+            await client.create_card(
+                title=title,
+                description=task.get("description", ""),
+                column_id=first_col_id,
+                deadline=task.get("deadline"),
+            )
+            created += 1
+        except Exception:
+            errors += 1
+
+    try:
+        await callback.message.edit_text(
+            f"✅ Задачи успешно добавлены на доску «{board_name}»!\n"
+            f"Создано: {created}" + (f"\n⚠️ Ошибок: {errors}" if errors else ""),
+        )
+    except Exception:
+        pass
+
+    await state.clear()
+    await callback.answer()
