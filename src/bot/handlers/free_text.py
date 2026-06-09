@@ -158,11 +158,12 @@ async def _exec_kanban_intent(intent: dict, message: Message) -> None:
     async with get_session() as session:
         team = await get_team_by_chat(session, message.chat.id)
 
-    if not team or not team.kanban_token or not team.kanban_board_id:
+    board_id = team.active_board_id or team.kanban_board_id
+    if not team or not team.kanban_token or not board_id:
         await message.answer("⚠️ Доска для задач не выбрана. Пожалуйста, выберите нужную доску в настройках команды, чтобы я мог создавать карточки.")
         return
 
-    client = YouGileClient(team.kanban_token, team.kanban_board_id)
+    client = YouGileClient(team.kanban_token, board_id)
 
     def _get(key: str, default: str = "") -> str:
         val = intent.get(key) or intent.get("parameters", {}).get(key) or default
@@ -197,7 +198,8 @@ async def _exec_kanban_intent(intent: dict, message: Message) -> None:
         except Exception as e:
             await message.answer(f"❌ Ошибка при создании задачи: {e}")
             return
-        await message.answer(f"✅ Задача «{title}» создана!")
+        board_name = team.active_board_name or "по умолчанию"
+        await message.answer(f"✅ Задача «{title}» создана!\n📋 Доска: {board_name}")
 
     elif kind == "show_boards":
         try:

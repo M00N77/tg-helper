@@ -310,7 +310,8 @@ async def process_free_text(
             return "🔑 Нужен LLM-ключ. Добавь в /settings → 🔑 API-ключи."
         team = await get_team_by_chat(session, chat_id)
 
-    if not team or not team.kanban_token or not team.kanban_board_id:
+    board_id = team.active_board_id or team.kanban_board_id
+    if not team or not team.kanban_token or not board_id:
         return "⚠️ Доска для задач не выбрана. Пожалуйста, выберите нужную доску в настройках команды, чтобы я мог создавать карточки."
 
     raw = await provider.chat([
@@ -319,7 +320,7 @@ async def process_free_text(
     ])
 
     response = _safe_parse_kanban(raw)
-    client = YouGileClient(team.kanban_token, team.kanban_board_id)
+    client = YouGileClient(team.kanban_token, board_id)
 
     if response.intent == "create_task":
         title = response.parameters.get("title", "").strip()
@@ -354,7 +355,8 @@ async def process_free_text(
             logger.exception("create_card failed")
             return f"❌ Ошибка при создании задачи: {e}"
 
-        return f"✅ Задача «{title}» создана!"
+        board_name = team.active_board_name or "по умолчанию"
+        return f"✅ Задача «{title}» создана!\n📋 Доска: {board_name}"
 
     if response.intent == "show_boards":
         try:

@@ -686,3 +686,17 @@ async def delete_pending_invite(
     invite = result.scalar_one_or_none()
     if invite:
         await session.delete(invite)
+
+
+async def set_active_board(
+    session: AsyncSession,
+    chat_id: int,
+    board_id: str,
+    board_name: str,
+) -> None:
+    team = await get_team_by_chat(session, chat_id)
+    if team is None:
+        return
+    team.active_board_id = board_id
+    team.active_board_name = board_name
+    await session.commit()

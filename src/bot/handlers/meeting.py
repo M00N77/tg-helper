@@ -23,6 +23,7 @@ def detect_platform(url: str) -> str:
 
 from aiogram import Router, F
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardButton
@@ -34,6 +35,7 @@ from src.db.repo import (
     get_or_create_user,
     get_team_by_chat,
     get_api_key,
+    set_active_board,
     update_meeting_summary,
     update_meeting_transcript,
 )
@@ -154,7 +156,7 @@ async def cb_meeting_back(callback: CallbackQuery):
 
 
 @router.message(F.audio | F.video | F.voice | F.document)
-async def handle_meeting_file(message: Message):
+async def handle_meeting_file(message: Message, state: FSMContext):
     media = message.audio or message.video or message.voice or message.document
     if media is None:
         return
@@ -260,36 +262,80 @@ async def handle_meeting_file(message: Message):
         created_tasks: list[str] = []
         board_title = ""
         first_col_title = ""
-        if team and team.kanban_token and team.kanban_board_id and tasks:
-            client = YouGileClient(team.kanban_token, team.kanban_board_id)
-            try:
-                boards = await client.get_boards()
-                for b in boards:
-                    if b["id"] == team.kanban_board_id:
-                        board_title = b.get("title", "")
-                        break
-                columns = await client.get_columns()
-                if columns:
-                    first_col_id = columns[0]["id"]
-                    first_col_title = columns[0].get("title", "")
-                else:
-                    first_col_id = None
-            except Exception:
-                first_col_id = None
+        needs_board_selection = False
+        all_boards: list[dict] = []
 
-            if first_col_id:
-                for task in tasks[:10]:
-                    title = (task.get("title") or "").strip()
-                    if not title:
-                        continue
+        if team and team.kanban_token and tasks:
+            board_id = team.active_board_id or team.kanban_board_id
+            if board_id:
+                client = YouGileClient(team.kanban_token, board_id)
+                try:
+                    boards_data = await client.get_boards()
+                    for b in boards_data:
+                        if b["id"] == board_id:
+                            board_title = b.get("title", "")
+                            break
+                    columns = await client.get_columns()
+                    if columns:
+                        first_col_id = columns[0]["id"]
+                        first_col_title = columns[0].get("title", "")
+                    else:
+                        first_col_id = None
+                except Exception:
+                    first_col_id = None
+
+                if first_col_id:
+                    for task in tasks[:10]:
+                        title = (task.get("title") or "").strip()
+                        if not title:
+                            continue
+                        try:
+                            deadline_raw = task.get("deadline") or ""
+                            deadline = deadline_raw[:10] if deadline_raw else None
+                            card = await client.create_card(title, "", first_col_id, deadline=deadline)
+                            created_tasks.append(card.get("title", title))
+                            created_count += 1
+                        except Exception:
+                            pass
+            else:
+                try:
+                    tmp_client = YouGileClient(team.kanban_token)
+                    all_boards = await tmp_client.get_boards()
+                except Exception:
+                    all_boards = []
+
+                if len(all_boards) == 1:
+                    b = all_boards[0]
+                    async with get_session() as session:
+                        await set_active_board(session, message.chat.id, b["id"], b["title"])
+                    board_id = b["id"]
+                    board_title = b["title"]
+                    client = YouGileClient(team.kanban_token, board_id)
                     try:
-                        deadline_raw = task.get("deadline") or ""
-                        deadline = deadline_raw[:10] if deadline_raw else None
-                        card = await client.create_card(title, "", first_col_id, deadline=deadline)
-                        created_tasks.append(card.get("title", title))
-                        created_count += 1
+                        columns = await client.get_columns()
+                        if columns:
+                            first_col_id = columns[0]["id"]
+                            first_col_title = columns[0].get("title", "")
+                        else:
+                            first_col_id = None
                     except Exception:
-                        pass
+                        first_col_id = None
+                    if first_col_id:
+                        for task in tasks[:10]:
+                            title = (task.get("title") or "").strip()
+                            if not title:
+                                continue
+                            try:
+                                deadline_raw = task.get("deadline") or ""
+                                deadline = deadline_raw[:10] if deadline_raw else None
+                                card = await client.create_card(title, "", first_col_id, deadline=deadline)
+                                created_tasks.append(card.get("title", title))
+                                created_count += 1
+                            except Exception:
+                                pass
+                elif len(all_boards) > 1:
+                    await state.update_data(pending_tasks=tasks[:10])
+                    needs_board_selection = True
 
         duration_str = ""
         if duration_sec:
@@ -325,11 +371,12 @@ async def handle_meeting_file(message: Message):
             lines.append(f"\n📊 <b>Создано на доске {board_part}{col_part}:</b>")
             for t in created_tasks:
                 lines.append(f"  • {t}")
+            lines.append(f"📋 Доска: {team.active_board_name or 'по умолчанию'}")
             # Change C: свежий срез доски после создания задач
             try:
                 snapshot = await build_board_text(
                     client,
-                    f"📊 Текущее состояние доски «{board_title or team.kanban_board_id}»",
+                    f"📊 Текущее состояние доски «{board_title or board_id}»",
                 )
                 lines.append(f"\n{snapshot}")
             except Exception:
@@ -347,13 +394,27 @@ async def handle_meeting_file(message: Message):
                 lines.append(f"  ~{per_person} мин/чел (равномерно)")
             lines.append(f"  Итого: ~{len(people) * per_person if people else per_person} чел·мин")
 
-        kb = InlineKeyboardBuilder()
-        kb.button(text="📊 Открыть доску", callback_data="meeting:yougile")
-        await notice.edit_text(
-            "\n".join(lines)[:4000],
-            parse_mode="HTML",
-            reply_markup=kb.as_markup()
-        )
+        if needs_board_selection:
+            lines.append("\n\n📋 <b>Выбери доску для создания задач:</b>")
+            kb = InlineKeyboardBuilder()
+            for b in all_boards:
+                kb.row(InlineKeyboardButton(
+                    text=b["title"],
+                    callback_data=f"sb:{b['id']}",
+                ))
+            await notice.edit_text(
+                "\n".join(lines)[:4000],
+                parse_mode="HTML",
+                reply_markup=kb.as_markup(),
+            )
+        else:
+            kb = InlineKeyboardBuilder()
+            kb.button(text="📊 Открыть доску", callback_data="meeting:yougile")
+            await notice.edit_text(
+                "\n".join(lines)[:4000],
+                parse_mode="HTML",
+                reply_markup=kb.as_markup(),
+            )
     finally:
         try:
             target.unlink(missing_ok=True)
@@ -371,11 +432,12 @@ async def cb_meeting_yougile(callback: CallbackQuery):
     if not team or not team.kanban_token:
         await callback.answer("Сначала выполни /kanban_login", show_alert=True)
         return
-    if not team.kanban_board_id:
+    board_id = team.active_board_id or team.kanban_board_id
+    if not board_id:
         await callback.answer("Сначала выбери доску /kanban_board", show_alert=True)
         return
     from src.bot.handlers.yougile import YouGileClient
-    client = YouGileClient(team.kanban_token, team.kanban_board_id)
+    client = YouGileClient(team.kanban_token, board_id)
     text = await build_board_text(client, "📊 Доска")
     await callback.message.answer(text, parse_mode="HTML")
     await callback.answer()

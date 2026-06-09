@@ -15,8 +15,9 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from src.bot.states import KanbanStates, KanbanAuthStates, KanbanCardStates
 
 from src.bot.handlers.yougile import YouGileClient
+from sqlalchemy.ext.asyncio import AsyncSession
 from src.db.session import get_session
-from src.db.repo import update_team_kanban, get_team_by_chat
+from src.db.repo import set_active_board, update_team_kanban, get_team_by_chat
 from src.userbot.manager import UserbotManager
 
 
@@ -271,29 +272,122 @@ async def process_password(message: Message, state: FSMContext):
 
 @router.message(Command("kanban_board"))
 async def cmd_kanban_board(message: Message, state: FSMContext):
+    args = message.text.split(maxsplit=1)
+
     async with get_session() as session:
         team = await get_team_by_chat(session, message.chat.id)
-        if not team or not team.kanban_token:
-            await message.answer("❌ Сначала выполни /kanban_login")
-            return
-        client = YouGileClient(team.kanban_token, board_id="")
+
+    if not team or not team.kanban_token:
+        await message.answer("❌ Сначала выполни /kanban_login")
+        return
+
+    # Fallback: аргумент передан явно — сохраняем как активную доску
+    if len(args) > 1:
+        board_id = args[1].strip()
+        client = YouGileClient(team.kanban_token, board_id)
         try:
             boards = await client.get_boards()
-        except Exception as e:
-            await message.answer(f"❌ Ошибка при получении досок: {e}")
-            return
-        if not boards:
-            await message.answer(
-                "❌ Ошибка: В вашей компании не найдено досок "
-                "или у токена нет прав."
-            )
-            return
-    text = "Выбери доску (введи номер):\n"
+        except Exception:
+            boards = []
+        board_name = next((b["title"] for b in boards if b["id"] == board_id), board_id)
+        async with get_session() as session:
+            await set_active_board(session, message.chat.id, board_id, board_name)
+        await message.answer(
+            f"✅ Активная доска: <b>{board_name}</b>\n"
+            "Все новые задачи будут создаваться сюда."
+        )
+        return
+
+    # Нет аргумента — получаем список досок
+    client = YouGileClient(team.kanban_token, board_id="")
+    try:
+        boards = await client.get_boards()
+    except Exception as e:
+        await message.answer(f"❌ Ошибка при получении досок: {e}")
+        return
+
+    if not boards:
+        await message.answer("❌ Досок не найдено в YouGile")
+        return
+
+    # Одна доска — выбираем сразу
+    if len(boards) == 1:
+        b = boards[0]
+        async with get_session() as session:
+            await set_active_board(session, message.chat.id, b["id"], b["title"])
+        await message.answer(
+            f"✅ Активная доска: <b>{b['title']}</b>\n"
+            "Все новые задачи будут создаваться сюда."
+        )
+        return
+
+    # 2–8 досок — inline-кнопки
+    if len(boards) <= 8:
+        await state.update_data(boards=[(b["id"], b["title"]) for b in boards])
+        kb = InlineKeyboardBuilder()
+        for i, b in enumerate(boards):
+            kb.row(InlineKeyboardButton(
+                text=b["title"],
+                callback_data=f"sb:{i}",
+            ))
+        await message.answer(
+            "📋 Выбери активную доску:",
+            reply_markup=kb.as_markup(),
+        )
+        return
+
+    # >8 досок — нумерованный список
+    text = "📋 <b>Выбери активную доску</b> (введи номер):\n\n"
     for i, b in enumerate(boards, 1):
-        text += f"{i}. {b['title']} (id: {b['id']})\n"
-    await state.update_data(boards=boards)
+        text += f"{i}. {b['title']}\n"
+    await state.update_data(boards=[(b["id"], b["title"]) for b in boards])
     await state.set_state(KanbanAuthStates.waiting_for_board)
     await message.answer(text)
+
+
+@router.callback_query(F.data.startswith("sb:"))
+async def cb_set_board(callback: CallbackQuery, session: AsyncSession, state: FSMContext):
+    idx = int(callback.data.split(":")[1])
+
+    data = await state.get_data()
+    boards = data.get("boards", [])
+    if idx < 0 or idx >= len(boards):
+        await callback.answer("Ошибка: доска не найдена", show_alert=True)
+        return
+    board_id, board_name = boards[idx]
+
+    team = await get_team_by_chat(session, callback.message.chat.id)
+
+    await set_active_board(session, callback.message.chat.id, board_id, board_name)
+
+    pending_tasks = data.get("pending_tasks")
+
+    if pending_tasks:
+        c = YouGileClient(team.kanban_token, board_id)
+        cols = await c.get_columns()
+        first_col_id = cols[0]["id"] if cols else None
+        created = 0
+        if first_col_id:
+            for task in pending_tasks:
+                title = (task.get("title") or "").strip()
+                if not title:
+                    continue
+                try:
+                    deadline_raw = task.get("deadline") or ""
+                    deadline = deadline_raw[:10] if deadline_raw else None
+                    await c.create_card(title, "", first_col_id, deadline=deadline)
+                    created += 1
+                except Exception:
+                    pass
+        await state.update_data(pending_tasks=None)
+        new_text = callback.message.html_text + f"\n\n✅ Задачи созданы на доске «{board_name}»: {created} шт."
+        await callback.message.edit_text(new_text, parse_mode="HTML")
+    else:
+        await callback.message.edit_text(
+            f"✅ Активная доска: <b>{board_name}</b>\n"
+            "Все новые задачи будут создаваться сюда."
+        )
+    await callback.answer()
 
 
 @router.message(KanbanAuthStates.waiting_for_board)
@@ -302,7 +396,7 @@ async def process_board(message: Message, state: FSMContext):
     boards = data.get("boards", [])
     try:
         idx = int(message.text.strip()) - 1
-        board = boards[idx]
+        board_id, board_name = boards[idx]
     except (ValueError, IndexError):
         await message.answer("❌ Введи номер из списка")
         return
@@ -310,34 +404,12 @@ async def process_board(message: Message, state: FSMContext):
     await state.clear()
 
     async with get_session() as session:
-        team = await get_team_by_chat(session, message.chat.id)
-        token = team.kanban_token
-        await update_team_kanban(
-            session,
-            message.chat.id,
-            token,
-            board["id"],
-            "yougile",
-        )
+        await set_active_board(session, message.chat.id, board_id, board_name)
 
-    client = YouGileClient(token, board["id"])
-    text = await build_board_text(client, board["title"])
-
-    kb = InlineKeyboardBuilder()
-    try:
-        columns = await client.get_columns()
-        for col in columns:
-            kb.row(InlineKeyboardButton(
-                text=f"📋 {col.get('title', '?')}",
-                callback_data=f"kanban:tasks:{col['id']}"
-            ))
-    except Exception:
-        pass
-    kb.row(
-        InlineKeyboardButton(text="🔄 Обновить", callback_data="kanban:board"),
-        InlineKeyboardButton(text="➕ Задача", callback_data="kanban:add"),
+    await message.answer(
+        f"✅ Активная доска: <b>{board_name}</b>\n"
+        "Все новые задачи будут создаваться сюда."
     )
-    await message.answer(text, reply_markup=kb.as_markup())
 
 
 # ── kanban:add — создание задачи (FSM) ─────────────────────────────────────

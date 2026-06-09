@@ -133,6 +133,24 @@ class YouGileClient:
             self._boards_cached_at = now
             return result
 
+    async def get_users(self) -> list[dict]:
+        """Получить список пользователей компании/проекта."""
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{self.base_url}/users",
+                headers=self.headers,
+            )
+            if response.status_code == 404:
+                return []
+            if response.status_code != 200:
+                body = response.text
+                logging.warning(
+                    f"[YouGile][get_users] status={response.status_code} body={body}"
+                )
+                return []
+            data = response.json()
+            return data.get("content", [])
+
     async def update_card(self, card_id: str, **kwargs) -> Dict:
         """Обновить карточку"""
         self._require_board()

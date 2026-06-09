@@ -1,4 +1,5 @@
 """Аналитика сроков YouGile-доски — /kanban_analytics."""
+import json
 import time
 from aiogram import Router
 from aiogram.filters import Command
@@ -21,6 +22,28 @@ SENTIMENT_PROMPT = (
     "Задачи:\n{sample}"
 )
 
+ASSIGN_PROMPT = """\
+Ты — помощник по управлению задачами. Определи наиболее вероятного исполнителя \
+для каждой задачи из списка участников команды.
+
+Участники команды (YouGile):
+{users}
+
+Задачи:
+{tasks}
+
+Верни ТОЛЬКО валидный JSON без пояснений и без markdown-блоков, строго в формате:
+[
+  {{"card_id": "...", "assignee_id": "...", "confidence": 0.85}},
+  ...
+]
+Правила:
+- assignee_id — это id из списка участников выше
+- confidence от 0.0 до 1.0
+- Если уверенность < 0.6 — ставь assignee_id: null
+- Верни запись для КАЖДОЙ задачи из списка
+"""
+
 
 async def _analyze_sentiment(card_titles: list[str], message: Message) -> str:
     if not card_titles:
@@ -38,6 +61,81 @@ async def _analyze_sentiment(card_titles: list[str], message: Message) -> str:
         return reply.strip() or "😐 Анализ недоступен"
     except Exception:
         return "😐 Анализ недоступен"
+
+
+async def _assign_tasks_by_ai(
+    client: YouGileClient,
+    cards: list[dict],
+    message: Message,
+) -> tuple[int, int]:
+    """
+    Запрашивает у LLM назначение исполнителей и применяет через YouGile API.
+    Возвращает (назначено, пропущено).
+    """
+    if not cards:
+        return 0, 0
+
+    # 1. Получаем список YouGile-пользователей
+    try:
+        users = await client.get_users()
+    except Exception:
+        users = []
+
+    if not users:
+        return 0, 0
+
+    # 2. Строим строки для промпта
+    users_text = "\n".join(
+        f"- id={u.get('id', '?')} name={u.get('name', '?')}"
+        for u in users
+    )
+    tasks_text = "\n".join(
+        f"- card_id={c.get('id', '?')} title={c.get('title', '?')}"
+        for c in cards[:40]  # не больше 40 задач за раз
+    )
+
+    # 3. Запрашиваем LLM
+    try:
+        async with get_session() as session:
+            owner = await get_or_create_user(session, message.from_user.id)
+            provider = await build_provider(session, owner)
+        if provider is None:
+            return 0, 0
+
+        raw = await provider.chat([
+            ChatMessage(
+                role="user",
+                content=ASSIGN_PROMPT.format(users=users_text, tasks=tasks_text),
+            )
+        ], heavy=False)
+    except Exception:
+        return 0, 0
+
+    # 4. Парсим JSON
+    try:
+        raw = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```")
+        assignments = json.loads(raw)
+    except Exception:
+        return 0, 0
+
+    # 5. Применяем назначения через API
+    assigned = 0
+    skipped = 0
+    for item in assignments:
+        card_id = item.get("card_id")
+        assignee_id = item.get("assignee_id")
+        confidence = item.get("confidence", 0.0)
+
+        if not card_id or not assignee_id or confidence < 0.6:
+            skipped += 1
+            continue
+        try:
+            await client.update_card(card_id, assigned=[assignee_id])
+            assigned += 1
+        except Exception:
+            skipped += 1
+
+    return assigned, skipped
 
 
 @router.message(Command("kanban_analytics"))
@@ -64,6 +162,7 @@ async def cmd_kanban_analytics(message: Message) -> None:
 
     total_cards = 0
     risk_cards = []
+    all_cards: list[dict] = []
 
     for col in columns:
         col_id = col["id"]
@@ -72,6 +171,8 @@ async def cmd_kanban_analytics(message: Message) -> None:
             cards = await client.get_cards_in_column(col_id)
         except Exception:
             cards = []
+
+        all_cards.extend(cards)
 
         if not cards:
             lines.append(f"<b>{col_title}</b>: пусто")
@@ -82,19 +183,18 @@ async def cmd_kanban_analytics(message: Message) -> None:
             ts = card.get("timestamp")
             if ts:
                 age_days = (now - ts) / (1000 * 86400)
-                ages.append((age_days, card.get("title", "?")))
+                ages.append((age_days, card.get("title", "?"), card.get("id")))
 
         total_cards += len(cards)
 
         if ages:
-            avg_days = sum(a for a, _ in ages) / len(ages)
+            avg_days = sum(a for a, _, _ in ages) / len(ages)
             lines.append(
                 f"<b>{col_title}</b>: {len(cards)} задач, "
                 f"среднее время {avg_days:.1f} дн."
             )
-            # риск: задачи старше 2x среднего
             threshold = avg_days * 2 if avg_days > 1 else 7
-            for age_days, title in ages:
+            for age_days, title, card_id in ages:
                 if age_days >= threshold:
                     risk_cards.append((col_title, title, age_days))
         else:
@@ -109,14 +209,30 @@ async def cmd_kanban_analytics(message: Message) -> None:
     else:
         lines.append("\n✅ Все задачи в норме")
 
-    all_titles = []
-    for col in columns:
-        try:
-            cards = await client.get_cards_in_column(col["id"])
-            all_titles.extend([c.get("title", "") for c in cards if c.get("title")])
-        except Exception:
-            pass
+    # Настроение команды
+    all_titles = [c.get("title", "") for c in all_cards if c.get("title")]
     sentiment = await _analyze_sentiment(all_titles, message)
     lines.append(f"\n🧠 <b>Настроение команды:</b> {sentiment}")
 
-    await message.answer("\n".join(lines), parse_mode="HTML")
+    # AI-назначение исполнителей
+    unassigned = [
+        c for c in all_cards
+        if not c.get("assigned") and c.get("id") and c.get("title")
+    ]
+    if unassigned:
+        lines.append(f"\n🤖 <b>Назначаю исполнителей</b> ({len(unassigned)} без назначения)...")
+        await message.answer("\n".join(lines), parse_mode="HTML")
+
+        assigned_count, skipped_count = await _assign_tasks_by_ai(client, unassigned, message)
+
+        result_lines = [""]
+        if assigned_count:
+            result_lines.append(f"✅ Назначено: {assigned_count} задач")
+        if skipped_count:
+            result_lines.append(f"⏭ Пропущено (низкая уверенность): {skipped_count}")
+        if not assigned_count and not skipped_count:
+            result_lines.append("⚠️ Участники YouGile не найдены или нет LLM-ключа")
+        await message.answer("\n".join(result_lines), parse_mode="HTML")
+    else:
+        lines.append("\n✅ Все задачи уже имеют исполнителей")
+        await message.answer("\n".join(lines), parse_mode="HTML")
