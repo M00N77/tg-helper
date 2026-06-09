@@ -1,4 +1,18 @@
+from typing import TypedDict
+
 from aiogram.fsm.state import State, StatesGroup
+
+
+class TaskData(TypedDict, total=False):
+    title: str
+    description: str
+    deadline: str | None
+    assignee: str | None
+
+
+class VoiceTaskState(TypedDict):
+    tasks: list[TaskData]
+    source_message_id: int
 
 
 class LoginStates(StatesGroup):
@@ -59,3 +73,7 @@ class TeamStates(StatesGroup):
 
 class MeetingStates(StatesGroup):
     waiting_url = State()
+
+
+class TaskCreationStates(StatesGroup):
+    waiting_for_board = State()

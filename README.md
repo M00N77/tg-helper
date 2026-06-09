@@ -50,7 +50,7 @@
 | Голосовое сообщение | Транскрипция → агент → действие |
 | Файл встречи (аудио/видео) | Транскрипция → саммари → задачи на YouGile |
 
-Действия, видимые другим (отправка), всегда подтверждаются inline-кнопкой.
+Действия, видимые другим (отправка), подтверждаются inline-кнопкой.
 
 ---
 
@@ -74,13 +74,13 @@
 - `/chat <имя>` — выбор контакта → саммари / задачи / черновик / catchup
 - `/catchup <имя>` — сразу к «где мы остановились»
 - `/send <инструкция>` — «скажи Оле, что созвон в 8» (с подтверждением)
-- `/search <текст>` — поиск (FTS5 + векторный, если индексировано)
+- `/search <текст>` — поиск (векторный по Qdrant + SQL-фильтры)
 - `/index <имя>` — проиндексировать чат для семантического поиска
 
 **Память**
 - `/todos` — открытые обещания (мои и мне), кнопки done/cancel
 - `/style <имя>` — пересчитать профиль моего стиля общения с этим контактом
-- `/digest [now\|on\|off\|at HH:MM]` — утренний дайджест
+- `/digest [now|on|off|at HH:MM]` — утренний дайджест
 - `/test_evening_digest` — ручной запуск вечернего дайджеста
 
 **Команда**
@@ -116,6 +116,7 @@
 │  команды, FSM, inline-меню,                      │
 │  free-text + голос → агент                       │
 │  фильтры: OwnerOnly / OwnerOrTeamMember          │
+│  middleware: InviteCheckMiddleware               │
 └────────────┬─────────────────────────────────────┘
              │
 ┌────────────▼─────────────────────────────────────┐
@@ -130,10 +131,11 @@
              │ MTProto                │ embeddings/LLM
 ┌────────────▼─────────┐     ┌────────▼──────────┐
 │ Userbot (Telethon)   │     │ Storage           │
-│ • Auth с 2FA         │     │ • SQLite + FTS5   │
+│ • Auth с 2FA         │     │ • PostgreSQL (asyncpg) │
 │ • NewMessage mirror  │     │ • Qdrant embedded │
 │ • UpdateFolderPeers  │     │ • Fernet secrets  │
 │ • Auto-reply offline │     │ • Alembic         │
+│ • Invite-check       │     │                   │
 └──────────────────────┘     └───────────────────┘
 ```
 
@@ -144,7 +146,7 @@
 - `reminders-loop` — пинги о приближении/просрочке дедлайнов
 - `auto-sync` — раз в час обновляет контакты и архивный статус
 
-**Real-time mirror.** Каждое входящее и исходящее сообщение в любом чате тут же пишется в `messages` таблицу. SQLite FTS5-индекс синхронизируется триггерами — поиск работает локально за миллисекунды (не через Telegram API).
+**Real-time mirror.** Каждое входящее и исходящее сообщение в любом чате тут же пишется в таблицу `messages`. Векторный поиск по Qdrant дополняется SQL-фильтрацией по метаданным (дата, чат, тип сообщения).
 
 **Lazy-транскрипция.** Голосовые при mirror'инге сохраняются без транскрипта — она запускается в момент анализа конкретного чата (faster-whisper локально или OpenAI Whisper API, по настройке).
 
@@ -159,12 +161,12 @@
 - Python 3.12
 - **aiogram 3.x** — control bot
 - **Telethon 1.36+** — userbot (MTProto)
-- **SQLAlchemy 2** + **aiosqlite** + **SQLite FTS5** — БД и полнотекстовый поиск
+- **SQLAlchemy 2** + **asyncpg** — PostgreSQL, асинхронный доступ
 - **Alembic** — миграции схемы БД
-- **Qdrant** (embedded) — векторный поиск
-- **OpenAI SDK** + **google-genai** — LLM (gpt-5-mini / gpt-5.5, gemini-2.5-flash / gemini-3-flash-preview)
-- **Groq SDK** — дополнительный LLM-провайдер (llama-4)
-- **GigaChat SDK** — дополнительный LLM-провайдер
+- **Qdrant** (embedded) — локальный векторный поиск
+- **OpenAI SDK** + **google-genai** — LLM-агент (gpt-5-mini / gpt-5.5, gemini-2.5-flash / gemini-3-flash-preview)
+- **Groq SDK** — LLM-провайдер с поддержкой сверхбыстрых Llama моделей (Llama 3.3 70B Versatile)
+- **GigaChat SDK** — дополнительный LLM-провайдер от Сбера
 - **faster-whisper** + OpenAI Whisper API — транскрипция голоса (local / api / hybrid)
 - **pypdf**, **python-docx** — документы
 - **Транскрипция встреч** — upload-based, через transcription_service
@@ -200,7 +202,7 @@ python -c "import secrets, base64; print(base64.urlsafe_b64encode(secrets.token_
 BOT_TOKEN=123456:AA...
 OWNER_TELEGRAM_ID=987654321
 ENCRYPTION_KEY=<base64-fernet-key>
-DATABASE_URL=sqlite+aiosqlite:///data/app.db
+DATABASE_URL=postgresql+asyncpg://user:password@host:5432/dbname
 ```
 
 ### 3. Подними
@@ -213,10 +215,11 @@ docker compose logs -f assistant
 Первая сборка занимает 3–5 минут (Python + ffmpeg + зависимости). Образ кэшируется.
 
 `./data/` смонтирован как volume — там лежат:
-- `app.db` — SQLite с FTS5 индексом
 - `qdrant/` — векторное хранилище
 - `media/` — скачанные voice/audio/документы
 - `cache/` — кэш моделей `faster-whisper` (~500 MB после первой транскрипции)
+
+База данных PostgreSQL подключается внешне через переменную `DATABASE_URL`.
 
 ### 4. Авторизация в боте
 
@@ -248,7 +251,7 @@ docker compose logs -f assistant
 - **📰 Новости** — авто-дайджест по темам из `/news_topics`.
 - **🛡 Приватность** — игнорировать архив (по умолчанию ВКЛ): архивные чаты не подгружаются никуда.
 - **🤖 LLM** — переключение OpenAI ↔ Gemini ↔ Groq ↔ GigaChat, лёгкая ↔ тяжёлая модель.
-- **🎤 Транскрипция** — `local` / `api` / `hybrid`.
+- **🎤 Траскрипция** — `local` / `api` / `hybrid`.
 - **🔑 API-ключи** — хранятся зашифрованными.
 
 Любую настройку можно поменять и **разговором**: «дайджест в 7 утра», «выключи новости», «текст автоответа: Сейчас занят».
@@ -267,117 +270,11 @@ docker compose logs -f assistant
 
 ---
 
-## Структура проекта
-
-```
-src/
-├── main.py                  # bootstrap: init_db → restore userbots → schedulers → bot
-├── config.py                # pydantic-settings + LLMDefaults
-├── crypto.py                # Fernet
-├── bot/
-│   ├── app.py               # регистрация роутеров, middleware
-│   ├── filters.py           # OwnerOnly, OwnerOrTeamMember, TeamAccessByChat
-│   ├── states.py            # FSM-states (Login, Kanban, Team, Meeting, …)
-│   ├── middlewares/
-│   │   └── invite_check.py  # InviteCheckMiddleware — авто-добавление в команду
-│   └── handlers/
-│       ├── start.py         # /start, /help
-│       ├── login.py         # /login (FSM с 2FA), /logout, /cancel
-│       ├── settings.py      # /settings — меню + разделы
-│       ├── chat_cmd.py      # /chat, /sync (с prefetch)
-│       ├── catchup_cmd.py   # /catchup
-│       ├── send.py          # /send + подтверждения
-│       ├── search.py        # /search, /index
-│       ├── todos.py         # /todos
-│       ├── digest_cmd.py    # /digest
-│       ├── digest_evening_cmd.py  # /test_evening_digest
-│       ├── style_cmd.py     # /style
-│       ├── news_cmd.py      # /news, /news_channels
-│       ├── news_topics.py   # /news_topics
-│       ├── menu.py          # /menu — главное меню
-│       ├── team.py          # /team — управление командой
-│       ├── meeting.py       # /meeting — транскрипция встреч, создание задач
-│       ├── kanban.py        # /kanban, /kanban_login, /kanban_board
-│       ├── kanban_analytics.py  # /kanban_analytics
-│       ├── dashboard.py     # /dashboard
-│       ├── weekly.py        # /weekly
-│       ├── burnout.py       # /burnout — анализ выгорания через LLM
-│       ├── yougile.py       # YouGileClient (API-клиент)
-│       └── free_text.py     # AI-агент: текст/голос → intent → действие
-├── core/
-│   ├── agent.py             # LLM intent router
-│   ├── chat_finder.py       # smart_find: FTS5 + LLM-classify имён + Tg fallback
-│   ├── conversation_context.py  # краткая память диалога с агентом
-│   ├── notifier.py          # bridge userbot → control bot
-│   ├── contact_resolver.py  # rapidfuzz по локальной БД контактов
-│   ├── chat_service.py      # load_chat: incremental + lazy транскрипция
-│   ├── transcription.py     # faster-whisper / OpenAI Whisper hybrid
-│   ├── documents.py         # PDF/DOCX/TXT
-│   ├── summarizer.py        # summary / draft / catchup промпты
-│   ├── style_profile.py     # JSON-профиль стиля per-контакт
-│   ├── commitment_extractor.py  # извлечение обещаний
-│   ├── digest.py            # утренний дайджест + scheduler
-│   ├── evening_digest.py    # вечерний дайджест + scheduler
-│   ├── news.py              # дайджест по каналам + scheduler
-│   ├── reminders.py         # пинги о дедлайнах
-│   ├── auto_sync.py         # фоновый re-sync контактов раз в час
-│   ├── timeutil.py          # zoneinfo helpers
-│   ├── text_sanitizer.py    # привод HTML к Telegram-whitelist
-│   ├── vector_store.py      # Qdrant embedded
-│   └── indexer.py           # batch индексация → embeddings
-├── services/
-│   └── meeting_room.py      # Jitsi / МТС Линк — создание комнат встреч
-├── userbot/
-│   ├── manager.py           # UserbotManager + pending login
-│   ├── dialogs.py           # sync_dialogs, prefetch_recent_messages
-│   ├── auto_reply.py        # NewMessage handler (offline + cooldown)
-│   ├── dialog_events.py     # UpdateFolderPeers → Contact.is_archived
-│   └── mirror.py            # Real-time mirror всех сообщений в БД и FTS5
-├── llm/
-│   ├── base.py              # ChatMessage + Protocol
-│   ├── openai_provider.py   # OpenAI
-│   ├── gemini_provider.py   # Google Gemini
-│   ├── groq_provider.py     # Groq (llama-4)
-│   ├── gigachat_provider.py # GigaChat (Сбер)
-│   └── router.py            # build_provider по UserSettings
-└── db/
-    ├── models.py            # User, Settings, Session, ApiKey, Contact, Message,
-    │                        # Commitment, AutoReplyLog, IndexJob, TranscriptionCache,
-    │                        # PendingAction, NewsTopic, Team, TeamMember,
-    │                        # PendingInvite, Meeting, MeetingTask
-    ├── session.py           # async engine + init_db (включая FTS5 schema)
-    └── repo.py              # CRUD с (де)шифрованием на границе + fts_search
-```
-
----
-
 ## Известные ограничения
 
 - **Telegram ToS**: userbot с авто-ответом — серая зона. По умолчанию авто-ответ выключен и шлёт нейтральный заготовленный текст с кулдауном между ответами.
 - **Один инстанс**: Qdrant embedded держит lock на `data/qdrant/` — параллельно бот не запустишь.
 - **Однопользовательский по умолчанию**: через `ALLOWED_TELEGRAM_IDS` можно добавить других; командный режим — через /team.
-
----
-
-## Шпаргалка
-
-```bash
-# логи
-docker compose logs -f assistant
-
-# зайти в контейнер
-docker compose exec assistant sh
-
-# полный сброс БД (сессия Telethon, ключи, контакты — всё)
-docker compose down
-rm -f data/app.db data/app.db-journal data/app.db-shm data/app.db-wal
-docker compose up -d
-
-# миграции (если менялись модели)
-alembic upgrade head
-
-# смена версий моделей: src/config.py → LLMDefaults
-```
 
 ---
 

@@ -155,7 +155,7 @@ async def cb_meeting_back(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.message(F.audio | F.video | F.voice | F.document)
+@router.message(F.audio | F.video | F.document)
 async def handle_meeting_file(message: Message, state: FSMContext):
     media = message.audio or message.video or message.voice or message.document
     if media is None:
