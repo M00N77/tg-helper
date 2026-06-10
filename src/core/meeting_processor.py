@@ -86,6 +86,101 @@ MEETING_EXTRACT_SYSTEM = (
 )
 
 
+def build_approval_text(payload: dict) -> str:
+    summary = payload.get("summary", "")
+    tasks = payload.get("tasks", [])
+    lines = [f"📋 <b>Саммари встречи</b>\n\n{summary}"]
+    lines.append(f"\n📌 <b>Найдено задач: {len(tasks)}</b>")
+    for i, t in enumerate(tasks[:10], 1):
+        title = t.get("title", "?")
+        assignee = t.get("assignee")
+        deadline = t.get("deadline")
+        tail = ""
+        if assignee:
+            tail += f" · {assignee}"
+        if deadline:
+            tail += f" · {deadline[:10]}"
+        lines.append(f"{i}. {title}{tail}")
+    lines.append("\nСоздать задачи на YouGile?")
+    return "\n".join(lines)[:4000]
+
+
+def build_approval_kb(action_id: int) -> "InlineKeyboardMarkup":
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    from aiogram.types import InlineKeyboardButton
+
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        InlineKeyboardButton(text="✅ Создать все задачи", callback_data=f"mtask:confirm:{action_id}"),
+        InlineKeyboardButton(text="📋 Выбрать задачи", callback_data=f"mtask:select:{action_id}"),
+    )
+    kb.row(
+        InlineKeyboardButton(text="❌ Отмена", callback_data=f"mtask:cancel:{action_id}"),
+    )
+    return kb.as_markup()
+
+
+def build_selection_text(payload: dict) -> str:
+    summary = payload.get("summary", "")
+    tasks = payload.get("tasks", [])
+    selected = payload.get("selected_indices", [])
+    all_selected = len(selected) == 0
+
+    lines = [f"📋 <b>Саммари встречи</b>\n\n{summary}"]
+    lines.append(f"\n📌 <b>Задачи</b>")
+    for i, t in enumerate(tasks[:10], 1):
+        idx = i - 1
+        checked = all_selected or idx in selected
+        mark = "✅" if checked else "⬜"
+        title = t.get("title", "?")
+        assignee = t.get("assignee")
+        deadline = t.get("deadline")
+        tail = ""
+        if assignee:
+            tail += f" · {assignee}"
+        if deadline:
+            tail += f" · {deadline[:10]}"
+        lines.append(f"{mark} {i}. {title}{tail}")
+    lines.append("\nВыбери задачи для создания:")
+    return "\n".join(lines)[:4000]
+
+
+def build_selection_kb(payload: dict, action_id: int) -> "InlineKeyboardMarkup":
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    from aiogram.types import InlineKeyboardButton
+
+    tasks = payload.get("tasks", [])
+    selected = payload.get("selected_indices", [])
+    all_selected = len(selected) == 0
+
+    kb = InlineKeyboardBuilder()
+    task_btns = []
+    for i, t in enumerate(tasks[:10]):
+        idx = i
+        checked = all_selected or idx in selected
+        label = f"{i+1}️⃣ {'✅' if checked else '⬜'}"
+        task_btns.append(InlineKeyboardButton(text=label, callback_data=f"mtask:toggle:{action_id}:{idx}"))
+
+    for chunk_start in range(0, len(task_btns), 5):
+        kb.row(*task_btns[chunk_start:chunk_start + 5])
+
+    if all_selected:
+        count = len(tasks)
+    else:
+        count = len(selected)
+
+    kb.row(
+        InlineKeyboardButton(
+            text=f"✅ Создать выбранные ({count})",
+            callback_data=f"mtask:create_sel:{action_id}",
+        )
+    )
+    kb.row(
+        InlineKeyboardButton(text="🔙 Назад", callback_data=f"mtask:back:{action_id}"),
+    )
+    return kb.as_markup()
+
+
 async def process_meeting_audio(
     audio_path: Path,
     meeting_id: int,
@@ -228,67 +323,37 @@ async def process_meeting_audio(
                         if columns:
                             first_col_id = columns[0]["id"]
                             first_col_title = columns[0].get("title", "")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning("YouGile column/board fetch failed for meeting %s: %s", meeting_id, e)
 
                     if first_col_id:
                         owner = await get_or_create_user(session, owner_telegram_id) if owner_telegram_id else None
+                        payload = {
+                            "meeting_id": meeting_id,
+                            "summary": summary,
+                            "tasks": tasks,
+                            "team_id": team.id,
+                            "chat_id": chat_id,
+                            "board_id": board_id,
+                            "first_col_id": first_col_id,
+                            "board_title": board_title,
+                            "first_col_title": first_col_title,
+                            "selected_indices": [],
+                        }
                         pending_action = await create_pending_action(
                             session,
                             user_id=owner.id if owner else 0,
                             kind="meeting_tasks",
-                            payload={
-                                "meeting_id": meeting_id,
-                                "summary": summary,
-                                "tasks": tasks,
-                                "team_id": team.id,
-                                "chat_id": chat_id,
-                                "board_id": board_id,
-                                "first_col_id": first_col_id,
-                                "board_title": board_title,
-                                "first_col_title": first_col_title,
-                            }
+                            payload=payload,
                         )
 
-                        # Send message with approval buttons
-                        lines = [f"📋 <b>Саммари встречи</b>\n\n{summary}"]
-                        lines.append(f"\n📌 <b>Найдено задач: {len(tasks)}</b>")
-                        for i, t in enumerate(tasks[:10], 1):
-                            title = t.get("title", "?")
-                            assignee = t.get("assignee")
-                            deadline = t.get("deadline")
-                            tail = ""
-                            if assignee:
-                                tail += f" · {assignee}"
-                            if deadline:
-                                tail += f" · {deadline[:10]}"
-                            lines.append(f"{i}. {title}{tail}")
-                        lines.append("\nСоздать задачи на YouGile?")
-
-                        from aiogram.utils.keyboard import InlineKeyboardBuilder
-                        from aiogram.types import InlineKeyboardButton
-
-                        kb = InlineKeyboardBuilder()
-                        kb.row(
-                            InlineKeyboardButton(text="✅ Создать все задачи", callback_data=f"mtask:confirm:{pending_action.id}"),
-                        )
-                        kb.row(
-                            InlineKeyboardButton(text="❌ Отмена", callback_data=f"mtask:cancel:{pending_action.id}"),
-                        )
+                        text = build_approval_text(payload)
+                        reply_markup = build_approval_kb(pending_action.id)
 
                         if notice_message:
-                            await notice_message.edit_text(
-                                "\n".join(lines)[:4000],
-                                parse_mode="HTML",
-                                reply_markup=kb.as_markup()
-                            )
+                            await notice_message.edit_text(text, parse_mode="HTML", reply_markup=reply_markup)
                         else:
-                            await bot.send_message(
-                                chat_id,
-                                "\n".join(lines)[:4000],
-                                parse_mode="HTML",
-                                reply_markup=kb.as_markup()
-                            )
+                            await bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=reply_markup)
 
                         logger.info("Created pending action for meeting tasks: %s", pending_action.id)
                         return

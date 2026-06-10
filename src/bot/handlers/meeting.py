@@ -30,10 +30,18 @@ from src.db.repo import (
     get_or_create_user,
     get_team_by_chat,
     get_pending_action,
+    update_pending_action,
     delete_pending_action,
 )
 from src.db.session import get_session
-from src.core.meeting_processor import process_meeting_audio, create_yougile_tasks_from_meeting
+from src.core.meeting_processor import (
+    process_meeting_audio,
+    create_yougile_tasks_from_meeting,
+    build_approval_text,
+    build_approval_kb,
+    build_selection_text,
+    build_selection_kb,
+)
 from src.config import settings as app_settings
 from src.db.models import Team
 
@@ -133,7 +141,7 @@ async def cb_meeting_back(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.message(F.audio | F.video | F.document)
+@router.message(F.audio | F.video | F.document | F.voice)
 async def handle_meeting_file(message: Message, state: FSMContext):
     media = message.audio or message.video or message.voice or message.document
     if media is None:
@@ -169,6 +177,10 @@ async def handle_meeting_file(message: Message, state: FSMContext):
     async with get_session() as session:
         owner = await get_or_create_user(session, message.from_user.id)
         team = await get_team_by_chat(session, message.chat.id)
+
+    # Voice messages outside team chat → let free_text handler process them
+    if message.voice and not team:
+        return
 
     meeting_id = None
     if team:
@@ -250,4 +262,106 @@ async def cb_mtask_cancel(callback: CallbackQuery) -> None:
     async with get_session() as session:
         await delete_pending_action(session, action_id)
     await callback.message.edit_text("❌ Создание задач отменено.")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mtask:select:"))
+async def cb_mtask_select(callback: CallbackQuery) -> None:
+    action_id = int(callback.data.split(":")[2])
+    async with get_session() as session:
+        action = await get_pending_action(session, action_id)
+        if action is None or action.kind != "meeting_tasks":
+            await callback.answer("Действие устарело", show_alert=True)
+            return
+        payload = action.payload
+    await callback.message.edit_text(
+        build_selection_text(payload),
+        parse_mode="HTML",
+        reply_markup=build_selection_kb(payload, action_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mtask:toggle:"))
+async def cb_mtask_toggle(callback: CallbackQuery) -> None:
+    parts = callback.data.split(":")
+    action_id = int(parts[2])
+    task_idx = int(parts[3])
+    async with get_session() as session:
+        action = await get_pending_action(session, action_id)
+        if action is None or action.kind != "meeting_tasks":
+            await callback.answer("Действие устарело", show_alert=True)
+            return
+        payload = action.payload
+        selected = payload.get("selected_indices", [])
+        if len(selected) == 0:
+            selected = list(range(len(payload.get("tasks", []))))
+        if task_idx in selected:
+            selected.remove(task_idx)
+        else:
+            selected.append(task_idx)
+            selected.sort()
+        payload["selected_indices"] = selected
+        await update_pending_action(session, action_id, payload)
+    await callback.message.edit_text(
+        build_selection_text(payload),
+        parse_mode="HTML",
+        reply_markup=build_selection_kb(payload, action_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mtask:back:"))
+async def cb_mtask_back(callback: CallbackQuery) -> None:
+    action_id = int(callback.data.split(":")[2])
+    async with get_session() as session:
+        action = await get_pending_action(session, action_id)
+        if action is None or action.kind != "meeting_tasks":
+            await callback.answer("Действие устарело", show_alert=True)
+            return
+        payload = action.payload
+    await callback.message.edit_text(
+        build_approval_text(payload),
+        parse_mode="HTML",
+        reply_markup=build_approval_kb(action_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mtask:create_sel:"))
+async def cb_mtask_create_selected(callback: CallbackQuery) -> None:
+    action_id = int(callback.data.split(":")[2])
+    async with get_session() as session:
+        action = await get_pending_action(session, action_id)
+        if action is None or action.kind != "meeting_tasks":
+            await callback.answer("Действие устарело или уже обработано", show_alert=True)
+            return
+        payload = action.payload
+        tasks = payload["tasks"]
+        meeting_id = payload["meeting_id"]
+        team = await session.get(Team, payload["team_id"])
+        await delete_pending_action(session, action_id)
+
+    if not team or not team.kanban_token:
+        await callback.message.edit_text("❌ Канбан больше не подключён. Задачи не созданы.")
+        await callback.answer()
+        return
+
+    selected = payload.get("selected_indices", [])
+    if len(selected) == 0:
+        selected_tasks = tasks
+    else:
+        selected_tasks = [tasks[i] for i in selected if i < len(tasks)]
+
+    if not selected_tasks:
+        await callback.message.edit_text("⚠️ Не выбрано ни одной задачи.")
+        await callback.answer()
+        return
+
+    created, failed, titles, board_name = await create_yougile_tasks_from_meeting(
+        team, selected_tasks, meeting_id, callback.message.chat.id, callback.bot
+    )
+
+    result = "✅ Задачи созданы!" if failed == 0 else f"✅ {created} создано, {failed} с ошибками"
+    await callback.message.edit_text(f"{result}\n\n📋 Доска: {board_name or 'по умолчанию'}")
     await callback.answer()

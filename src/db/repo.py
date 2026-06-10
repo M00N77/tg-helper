@@ -492,6 +492,13 @@ async def get_pending_action(session: AsyncSession, action_id: int) -> PendingAc
     return await session.get(PendingAction, action_id)
 
 
+async def update_pending_action(session: AsyncSession, action_id: int, payload: dict) -> None:
+    pa = await session.get(PendingAction, action_id)
+    if pa is not None:
+        pa.payload = payload
+        await session.flush()
+
+
 async def delete_pending_action(session: AsyncSession, action_id: int) -> None:
     pa = await session.get(PendingAction, action_id)
     if pa is not None:
