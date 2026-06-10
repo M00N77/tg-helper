@@ -9,8 +9,8 @@ from src.bot.filters import OwnerOrTeamMember, is_team_owner
 from src.bot.states import TeamStates
 from src.db.models import Team
 from src.db.repo import (
-    create_pending_invite, create_team, add_team_member, get_team_by_chat,
-    get_team_members, remove_team_member, get_user_teams,
+    create_pending_invite, create_team, add_team_member, get_or_create_user,
+    get_team_by_chat, get_team_members, remove_team_member, get_user_teams,
 )
 from src.db.session import get_session
 
@@ -46,8 +46,11 @@ async def cmd_team(message: Message, state: FSMContext, command: CommandObject):
             members = await get_team_members(session, team.id)
         text = f"👥 <b>Участники «{team.name}»</b>\n\n"
         for m in members:
+            async with get_session() as session:
+                user = await get_or_create_user(session, m.telegram_id)
+                name = user.display_name or "Аноним"
             icon = "👑" if m.role == "admin" else "👤"
-            text += f"{icon} {m.telegram_id} — {m.role}\n"
+            text += f"{icon} {name} — {m.role}\n"
         text += f"\nВсего: {len(members)}"
         await message.answer(text)
         return
@@ -210,8 +213,11 @@ async def cb_team_members(callback: CallbackQuery):
 
     text = f"👥 <b>Участники команды «{team.name}»</b>\n\n"
     for m in members:
+        async with get_session() as session:
+            user = await get_or_create_user(session, m.telegram_id)
+            name = user.display_name or "Аноним"
         role_icon = "👑" if m.role == "admin" else "👤"
-        text += f"{role_icon} {m.telegram_id} — {m.role}\n"
+        text += f"{role_icon} {name} — {m.role}\n"
 
     text += f"\nВсего: {len(members)} участников"
 

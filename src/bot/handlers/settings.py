@@ -44,6 +44,7 @@ async def _render_menu(telegram_id: int) -> tuple[str, InlineKeyboardMarkup]:
         groq_key = await get_api_key(session, owner, "groq")
 
     text = (
+        f"👋 Привет, <b>{owner.display_name}</b>!\n\n"
         "⚙ <b>Настройки</b>\n\n"
         f"🌍 Часовой пояс: <b>{tz_short(s.timezone)}</b>\n"
         f"🔄 Авто-ответ: {_check(s.auto_reply_enabled)} (кулдаун {s.auto_reply_cooldown_min}м)\n"
@@ -74,6 +75,7 @@ async def _render_menu(telegram_id: int) -> tuple[str, InlineKeyboardMarkup]:
         InlineKeyboardButton(text="🎤 Транскрипция", callback_data="set:sec:transcription"),
     )
     kb.row(InlineKeyboardButton(text="🔑 API-ключи", callback_data="set:sec:keys"))
+    kb.row(InlineKeyboardButton(text="✏ Изменить имя", callback_data="set:input:display_name"))
     kb.row(
         InlineKeyboardButton(text="❌ Закрыть", callback_data="set:close"),
         InlineKeyboardButton(text="◀ Главное меню", callback_data="menu:back"),
@@ -587,6 +589,18 @@ async def cb_input_news_time(callback: CallbackQuery, state: FSMContext) -> None
     await callback.answer()
 
 
+@router.callback_query(F.data == "set:input:display_name")
+async def cb_input_display_name(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(SettingsStates.waiting_display_name)
+    await callback.message.answer(
+        "✏ <b>Как к тебе обращаться?</b>\n\n"
+        "Пришли новое имя (минимум 4 символа).\n"
+        "Это имя будут видеть другие участники команды.\n\n"
+        "/cancel — отмена."
+    )
+    await callback.answer()
+
+
 @router.callback_query(F.data == "set:noop:news_topics")
 async def cb_noop_news_topics(callback: CallbackQuery) -> None:
     await callback.answer("Открой /news_topics в меню команд", show_alert=True)
@@ -751,6 +765,25 @@ async def step_auto_reply_text(message: Message, state: FSMContext) -> None:
         owner.settings.auto_reply_text = text
     await state.clear()
     await message.answer(f"✅ Текст автоответа сохранён:\n<i>«{text}»</i>")
+
+
+@router.message(SettingsStates.waiting_display_name)
+async def step_display_name(message: Message, state: FSMContext) -> None:
+    name = (message.text or "").strip()
+    if not name:
+        await message.answer("Пустое имя. Повтори или /cancel.")
+        return
+    if len(name) < 4:
+        await message.answer("❌ Слишком коротко. Минимум 4 символа. Повтори или /cancel.")
+        return
+    if len(name) > 64:
+        await message.answer("❌ Слишком длинно. Максимум 64 символа. Повтори или /cancel.")
+        return
+    async with get_session() as session:
+        owner = await get_or_create_user(session, message.from_user.id)
+        owner.display_name = name
+    await state.clear()
+    await message.answer(f"✅ Имя изменено на <b>{name}</b>!")
 
 
 @router.message(SettingsStates.waiting_timezone)
