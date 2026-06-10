@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Callable
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -47,15 +48,7 @@ def get_bot() -> Bot | None:
     return _bot
 
 
-async def run_bot(userbot_manager: UserbotManager) -> None:
-    global _bot
-    bot = Bot(
-        token=settings.bot_token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
-    _bot = bot
-    notifier.attach(bot)
-
+def build_main_dispatcher(userbot_manager: UserbotManager) -> Dispatcher:
     dp = Dispatcher(storage=MemoryStorage())
     dp.message.outer_middleware(InviteCheckMiddleware())
 
@@ -84,6 +77,28 @@ async def run_bot(userbot_manager: UserbotManager) -> None:
     dp.include_router(team_handlers.router)
     # ВАЖНО: free_text — самым последним, чтобы команды и FSM перехватили текст раньше
     dp.include_router(free_text.router)
+
+    return dp
+
+
+async def run_bot(
+    userbot_manager: UserbotManager,
+    token: str | None = None,
+    dp_factory: Callable[[], Dispatcher] | None = None,
+) -> None:
+    global _bot
+    token = token or settings.bot_token
+    bot = Bot(
+        token=token,
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
+    _bot = bot
+    notifier.attach(bot)
+
+    if dp_factory is None:
+        dp = build_main_dispatcher(userbot_manager)
+    else:
+        dp = dp_factory()
 
     me = await bot.get_me()
     logger.info("Control bot started as @%s", me.username)

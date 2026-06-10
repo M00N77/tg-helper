@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 from src.bot.app import run_bot
+from src.config import settings as app_settings
 from src.core.auto_sync import auto_sync_loop
 from src.core.digest import digest_scheduler_loop
 from src.core.evening_digest import evening_digest_loop
@@ -48,8 +49,13 @@ async def main() -> None:
         asyncio.create_task(_clean_trash_loop(), name="trash-cleaner"),
     ]
 
+    bot_tasks = [run_bot(userbot_manager)]
+    if app_settings.bot_token_2:
+        from src.group_bot.app import run_group_bot
+        bot_tasks.append(run_group_bot(app_settings.bot_token_2))
+
     try:
-        await run_bot(userbot_manager)
+        await asyncio.gather(*bot_tasks)
     finally:
         for t in bg_tasks:
             t.cancel()

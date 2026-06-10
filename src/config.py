@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     )
 
     bot_token: str = Field(..., description="Токен control-бота из @BotFather")
+    bot_token_2: str | None = Field(default=None, description="Токен группового бота из @BotFather (BOT_TOKEN_2)")
     owner_telegram_id: int = Field(..., description="Telegram user_id основного владельца")
     allowed_telegram_ids: list[int] = Field(
         default_factory=list,

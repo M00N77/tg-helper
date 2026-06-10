@@ -228,7 +228,7 @@ class Team(Base):
     __tablename__ = "teams"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(128), default="")
+    name: Mapped[str] = mapped_column(String(128), default="Команда", server_default="Команда")
     chat_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
     owner_telegram_id: Mapped[int] = mapped_column(BigInteger, default=0)
     kanban_token: Mapped[str | None] = mapped_column(Text, nullable=True)
