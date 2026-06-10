@@ -34,15 +34,26 @@ from src.core.notifier import notifier
 from src.bot.middlewares.invite_check import InviteCheckMiddleware
 from src.userbot.manager import UserbotManager
 
+from src.services.ngrok_tunnel import start_tunnel, stop_tunnel
+from src.services.webhook_server import start_webhook_server, stop_webhook_server
+
 
 logger = logging.getLogger(__name__)
 
+_bot: Bot | None = None
+
+
+def get_bot() -> Bot | None:
+    return _bot
+
 
 async def run_bot(userbot_manager: UserbotManager) -> None:
+    global _bot
     bot = Bot(
         token=settings.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
+    _bot = bot
     notifier.attach(bot)
 
     dp = Dispatcher(storage=MemoryStorage())
@@ -77,7 +88,18 @@ async def run_bot(userbot_manager: UserbotManager) -> None:
     me = await bot.get_me()
     logger.info("Control bot started as @%s", me.username)
 
+    from src.services import webhook_server as ws_module
+
+    public_url = await start_tunnel()
+    if public_url:
+        ws_module.PUBLIC_WEBHOOK_URL = public_url + "/webhook/mtslink"
+        logger.info("Webhook URL: %s", ws_module.PUBLIC_WEBHOOK_URL)
+    await start_webhook_server()
+
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
+        await stop_webhook_server()
+        await stop_tunnel()
         await bot.session.close()
+        logger.info("Bot shut down complete")

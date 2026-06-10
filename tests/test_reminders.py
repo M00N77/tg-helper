@@ -14,6 +14,9 @@ def _mock_settings(**kwargs) -> MagicMock:
     s.reminders_enabled = kwargs.get("reminders_enabled", True)
     s.reminder_lead_hours = kwargs.get("reminder_lead_hours", 2)
     s.reminder_overdue_enabled = kwargs.get("reminder_overdue_enabled", True)
+    s.reminder_work_hours_start = kwargs.get("reminder_work_hours_start", 0)
+    s.reminder_work_hours_end = kwargs.get("reminder_work_hours_end", 24)
+    s.reminder_work_days = kwargs.get("reminder_work_days", "1,2,3,4,5,6,7")
     s.timezone = kwargs.get("timezone", "UTC")
     return s
 
@@ -84,6 +87,79 @@ async def test_reminders_disabled():
         mock_get_session.return_value.__aenter__.return_value = MagicMock()
         await _check_once(42)
         mock_notify.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_outside_work_hours():
+    """Если текущий час вне reminder_work_hours_start..end — ничего не отправляем."""
+    now = datetime.utcnow()
+    commitment = _past(hours=2, id=1)
+
+    owner = MagicMock()
+    # work hours 10-12, outside current hour → skip
+    owner.settings = _mock_settings(reminder_work_hours_start=10, reminder_work_hours_end=12)
+
+    with (
+        patch("src.core.reminders.get_or_create_user", return_value=owner),
+        patch("src.core.reminders.notifier.notify", new_callable=AsyncMock) as mock_notify,
+        patch("src.core.reminders.get_session") as mock_get_session,
+    ):
+        mock_get_session.return_value.__aenter__.return_value = _mock_session_execute([commitment])
+        await _check_once(42)
+        mock_notify.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_non_work_day():
+    """Если today не в reminder_work_days — ничего не отправляем."""
+    now = datetime.utcnow()
+    commitment = _past(hours=2, id=1)
+
+    owner = MagicMock()
+    owner.settings = _mock_settings(reminder_work_days="")  # no work days → always skip
+
+    with (
+        patch("src.core.reminders.get_or_create_user", return_value=owner),
+        patch("src.core.reminders.notifier.notify", new_callable=AsyncMock) as mock_notify,
+        patch("src.core.reminders.get_session") as mock_get_session,
+    ):
+        mock_get_session.return_value.__aenter__.return_value = _mock_session_execute([commitment])
+        await _check_once(42)
+        mock_notify.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_inside_work_hours_and_work_day():
+    """В рабочее время и день — напоминания приходят (интеграционный smoke-test)."""
+    now = datetime.utcnow()
+    commitment = _past(hours=2, id=1)
+
+    owner = MagicMock()
+    owner.settings = _mock_settings(
+        reminder_work_hours_start=0,
+        reminder_work_hours_end=24,
+        reminder_work_days="1,2,3,4,5,6,7",
+    )
+
+    with (
+        patch("src.core.reminders.get_or_create_user", return_value=owner),
+        patch("src.core.reminders.notifier.notify", new_callable=AsyncMock) as mock_notify,
+        patch("src.core.reminders.get_session") as mock_get_session,
+    ):
+        session1 = _mock_session_execute([commitment])
+        session2 = MagicMock()
+        session2.get = AsyncMock(return_value=commitment)
+
+        mock_get_session.side_effect = [
+            AsyncMock(__aenter__=AsyncMock(return_value=session1)),
+            AsyncMock(__aenter__=AsyncMock(return_value=session2)),
+        ]
+
+        await _check_once(42)
+
+        mock_notify.assert_awaited_once()
+        text = mock_notify.await_args[0][0]
+        assert "Просрочено" in text
 
 
 @pytest.mark.asyncio

@@ -19,10 +19,14 @@ from src.db.repo import (
     delete_telegram_session,
     get_api_key,
     get_or_create_user,
+    hard_delete_expired_trash,
     list_open_commitments,
     list_recent_auto_replies,
+    list_trashed_commitments,
+    restore_commitment,
     save_telegram_session,
     toggle_news_topic,
+    trash_commitment,
     update_commitment_status,
     upsert_api_key,
     upsert_contact,
@@ -186,3 +190,96 @@ async def test_news_topic_crud(session):
 
     deleted = await delete_news_topic(session, user, nt.id)
     assert deleted is True
+
+
+@pytest.mark.asyncio
+async def test_trash_and_restore_commitment(session):
+    user = await get_or_create_user(session, telegram_id=999999988)
+    c = await add_commitment(
+        session,
+        user_id=user.id,
+        peer_id=111111116,
+        peer_name="Test",
+        message_id=1,
+        direction="mine",
+        text="Test trash commitment",
+        deadline_at=None,
+    )
+    assert c.status == "open"
+    assert c.deleted_at is None
+
+    ok = await trash_commitment(session, c.id)
+    assert ok is True
+    assert c.status == "trashed"
+    assert c.deleted_at is not None
+
+    trashed = await list_trashed_commitments(session, user)
+    assert any(x.id == c.id for x in trashed)
+
+    ok2 = await restore_commitment(session, c.id)
+    assert ok2 is True
+    assert c.status == "open"
+    assert c.deleted_at is None
+
+    open_list = await list_open_commitments(session, user)
+    assert any(x.id == c.id for x in open_list)
+
+
+@pytest.mark.asyncio
+async def test_hard_delete_expired_trash(session):
+    user = await get_or_create_user(session, telegram_id=999999987)
+    c = await add_commitment(
+        session,
+        user_id=user.id,
+        peer_id=111111117,
+        peer_name="Test",
+        message_id=2,
+        direction="mine",
+        text="Expired trash commitment",
+        deadline_at=None,
+    )
+    await trash_commitment(session, c.id)
+    # manually set deleted_at to 25 hours ago
+    c.deleted_at = datetime.utcnow() - timedelta(hours=25)
+
+    deleted_count = await hard_delete_expired_trash(session)
+    assert deleted_count >= 1
+
+    remaining = await list_trashed_commitments(session, user)
+    assert not any(x.id == c.id for x in remaining)
+
+
+@pytest.mark.asyncio
+async def test_trash_twice_returns_false(session):
+    user = await get_or_create_user(session, telegram_id=999999986)
+    c = await add_commitment(
+        session,
+        user_id=user.id,
+        peer_id=111111118,
+        peer_name="Test",
+        message_id=3,
+        direction="mine",
+        text="Double trash",
+        deadline_at=None,
+    )
+    ok1 = await trash_commitment(session, c.id)
+    assert ok1 is True
+    ok2 = await trash_commitment(session, c.id)
+    assert ok2 is False
+
+
+@pytest.mark.asyncio
+async def test_restore_open_commitment_returns_false(session):
+    user = await get_or_create_user(session, telegram_id=999999985)
+    c = await add_commitment(
+        session,
+        user_id=user.id,
+        peer_id=111111119,
+        peer_name="Test",
+        message_id=4,
+        direction="mine",
+        text="Already open",
+        deadline_at=None,
+    )
+    ok = await restore_commitment(session, c.id)
+    assert ok is False

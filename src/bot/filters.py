@@ -49,3 +49,20 @@ class OwnerOrTeamMember(BaseFilter):
                 return False
             members = await get_team_members(session, team.id)
         return any(m.telegram_id == uid for m in members)
+
+
+async def is_team_owner(event: Message | CallbackQuery) -> bool:
+    """Проверяет, является ли пользователь владельцем команды (или глобальным владельцем)."""
+    uid = event.from_user.id if event.from_user else 0
+    if uid == 0:
+        return False
+    if uid in settings.all_allowed_ids:
+        return True
+    chat_id = _get_chat_id(event)
+    if chat_id == 0:
+        return False
+    async with get_session() as session:
+        team = await get_team_by_chat(session, chat_id)
+        if team is None:
+            return False
+    return team.owner_telegram_id == uid

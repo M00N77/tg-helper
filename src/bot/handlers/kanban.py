@@ -12,6 +12,7 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from src.bot.filters import is_team_owner
 from src.bot.states import KanbanStates, KanbanAuthStates, KanbanCardStates
 
 from src.bot.handlers.yougile import YouGileClient
@@ -54,9 +55,12 @@ async def cmd_kanban(message: Message):
     async with get_session() as session:
         team = await get_team_by_chat(session, message.chat.id)
     
+    is_owner = await is_team_owner(message)
+    
     kb = InlineKeyboardBuilder()
     if not team or not team.kanban_token:
-        kb.row(InlineKeyboardButton(text="🔌 Подключить доску", callback_data="kanban:setup"))
+        if is_owner:
+            kb.row(InlineKeyboardButton(text="🔌 Подключить доску", callback_data="kanban:setup"))
     else:
         kb.row(
             InlineKeyboardButton(text="📊 Показать доску", callback_data="kanban:board"),
@@ -66,7 +70,8 @@ async def cmd_kanban(message: Message):
             InlineKeyboardButton(text="🔄 Синхронизировать", callback_data="kanban:sync"),
             InlineKeyboardButton(text="📈 Статистика", callback_data="kanban:stats"),
         )
-        kb.row(InlineKeyboardButton(text="⚙ Настройки", callback_data="kanban:settings"))
+        if is_owner:
+            kb.row(InlineKeyboardButton(text="⚙ Настройки", callback_data="kanban:settings"))
     
     await message.answer(
         "📊 <b>Канбан-доска</b>\n\n"
@@ -83,6 +88,9 @@ async def cmd_kanban(message: Message):
 @router.callback_query(F.data == "kanban:setup")
 async def cb_kanban_setup(callback: CallbackQuery, state: FSMContext):
     """Настройка подключения к канбан-доске"""
+    if not await is_team_owner(callback):
+        await callback.answer("⛔ Только владелец команды может подключать доску", show_alert=True)
+        return
     kb = InlineKeyboardBuilder()
     kb.row(
         InlineKeyboardButton(text="📦 YouGile", callback_data="kanban:provider:yougile"),
@@ -101,6 +109,9 @@ async def cb_kanban_setup(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("kanban:provider:"))
 async def cb_kanban_provider(callback: CallbackQuery, state: FSMContext):
     """Выбор провайдера и ввод токена"""
+    if not await is_team_owner(callback):
+        await callback.answer("⛔ Только владелец команды может подключать доску", show_alert=True)
+        return
     provider = callback.data.split(":")[2]
     
     await state.update_data(kanban_provider=provider)
@@ -126,6 +137,10 @@ async def cb_kanban_provider(callback: CallbackQuery, state: FSMContext):
 @router.message(KanbanStates.waiting_token)
 async def step_kanban_token(message: Message, state: FSMContext):
     """Сохранение токена и настройка"""
+    if not await is_team_owner(message):
+        await message.answer("⛔ Только владелец команды может подключать доску")
+        await state.clear()
+        return
     data = await state.get_data()
     provider = data["kanban_provider"]
     
@@ -205,6 +220,9 @@ async def cb_kanban_board(callback: CallbackQuery):
 
 @router.message(Command("kanban_login"))
 async def cmd_kanban_login(message: Message, state: FSMContext):
+    if not await is_team_owner(message):
+        await message.answer("⛔ Только владелец команды может менять настройки доски")
+        return
     await state.set_state(KanbanAuthStates.waiting_login)
     await message.answer(
         "Введи логин от аккаунта YouGile:",
@@ -217,6 +235,10 @@ async def cmd_kanban_login(message: Message, state: FSMContext):
 
 @router.message(KanbanAuthStates.waiting_login)
 async def process_login(message: Message, state: FSMContext):
+    if not await is_team_owner(message):
+        await message.answer("⛔ Только владелец команды может менять настройки доски")
+        await state.clear()
+        return
     if message.text == "❌ Отмена":
         await state.clear()
         await message.answer(
@@ -230,6 +252,10 @@ async def process_login(message: Message, state: FSMContext):
 
 @router.message(KanbanAuthStates.waiting_password)
 async def process_password(message: Message, state: FSMContext):
+    if not await is_team_owner(message):
+        await message.answer("⛔ Только владелец команды может менять настройки доски")
+        await state.clear()
+        return
     if message.text == "❌ Отмена":
         await state.clear()
         await message.answer(
@@ -272,6 +298,10 @@ async def process_password(message: Message, state: FSMContext):
 
 @router.message(Command("kanban_board"))
 async def cmd_kanban_board(message: Message, state: FSMContext):
+    if not await is_team_owner(message):
+        await message.answer("⛔ Только владелец команды может менять доску")
+        return
+
     args = message.text.split(maxsplit=1)
 
     async with get_session() as session:
@@ -347,6 +377,9 @@ async def cmd_kanban_board(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("sb:"))
 async def cb_set_board(callback: CallbackQuery, session: AsyncSession, state: FSMContext):
+    if not await is_team_owner(callback):
+        await callback.answer("⛔ Только владелец команды может менять доску", show_alert=True)
+        return
     idx = int(callback.data.split(":")[1])
 
     data = await state.get_data()
@@ -392,6 +425,10 @@ async def cb_set_board(callback: CallbackQuery, session: AsyncSession, state: FS
 
 @router.message(KanbanAuthStates.waiting_for_board)
 async def process_board(message: Message, state: FSMContext):
+    if not await is_team_owner(message):
+        await message.answer("⛔ Только владелец команды может менять доску")
+        await state.clear()
+        return
     data = await state.get_data()
     boards = data.get("boards", [])
     try:
@@ -664,6 +701,9 @@ async def cb_kanban_stats(callback: CallbackQuery):
 
 @router.callback_query(F.data == "kanban:settings")
 async def cb_kanban_settings(callback: CallbackQuery):
+    if not await is_team_owner(callback):
+        await callback.answer("⛔ Только владелец команды может менять настройки доски", show_alert=True)
+        return
     kb = InlineKeyboardBuilder()
     kb.row(InlineKeyboardButton(text="🔄 Сменить доску", callback_data="kanban:change_board"))
     kb.row(InlineKeyboardButton(text="🔑 Сменить аккаунт", callback_data="kanban:relogin"))
@@ -680,6 +720,9 @@ async def cb_kanban_settings(callback: CallbackQuery):
 
 @router.callback_query(F.data == "kanban:change_board")
 async def cb_kanban_change_board(callback: CallbackQuery, state: FSMContext):
+    if not await is_team_owner(callback):
+        await callback.answer("⛔ Только владелец команды может менять доску", show_alert=True)
+        return
     async with get_session() as session:
         team = await get_team_by_chat(session, callback.message.chat.id)
     if not team or not team.kanban_token:
@@ -717,6 +760,9 @@ async def cb_kanban_change_board(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("kanban:choose:"))
 async def cb_kanban_choose_board(callback: CallbackQuery, state: FSMContext):
+    if not await is_team_owner(callback):
+        await callback.answer("⛔ Только владелец команды может менять доску", show_alert=True)
+        return
     data = await state.get_data()
     boards = data.get("boards", [])
     try:
@@ -746,6 +792,9 @@ async def cb_kanban_choose_board(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "kanban:relogin")
 async def cb_kanban_relogin(callback: CallbackQuery):
+    if not await is_team_owner(callback):
+        await callback.answer("⛔ Только владелец команды может менять настройки доски", show_alert=True)
+        return
     async with get_session() as session:
         await update_team_kanban(session, callback.message.chat.id, "", "", "")
 
@@ -762,6 +811,9 @@ async def cb_kanban_relogin(callback: CallbackQuery):
 
 @router.callback_query(F.data == "kanban:disconnect")
 async def cb_kanban_disconnect(callback: CallbackQuery):
+    if not await is_team_owner(callback):
+        await callback.answer("⛔ Только владелец команды может отключать доску", show_alert=True)
+        return
     kb = InlineKeyboardBuilder()
     kb.row(
         InlineKeyboardButton(text="✅ Да, отключить", callback_data="kanban:disconnect:yes"),
@@ -778,6 +830,9 @@ async def cb_kanban_disconnect(callback: CallbackQuery):
 
 @router.callback_query(F.data == "kanban:disconnect:yes")
 async def cb_kanban_disconnect_yes(callback: CallbackQuery):
+    if not await is_team_owner(callback):
+        await callback.answer("⛔ Только владелец команды может отключать доску", show_alert=True)
+        return
     async with get_session() as session:
         await update_team_kanban(session, callback.message.chat.id, "", "", "")
 
@@ -792,9 +847,12 @@ async def cb_kanban_back_to_menu(callback: CallbackQuery):
     async with get_session() as session:
         team = await get_team_by_chat(session, callback.message.chat.id)
 
+    is_owner = await is_team_owner(callback)
+
     kb = InlineKeyboardBuilder()
     if not team or not team.kanban_token:
-        kb.row(InlineKeyboardButton(text="🔌 Подключить доску", callback_data="kanban:setup"))
+        if is_owner:
+            kb.row(InlineKeyboardButton(text="🔌 Подключить доску", callback_data="kanban:setup"))
     else:
         kb.row(
             InlineKeyboardButton(text="📊 Показать доску", callback_data="kanban:board"),
@@ -804,7 +862,8 @@ async def cb_kanban_back_to_menu(callback: CallbackQuery):
             InlineKeyboardButton(text="🔄 Синхронизировать", callback_data="kanban:sync"),
             InlineKeyboardButton(text="📈 Статистика", callback_data="kanban:stats"),
         )
-        kb.row(InlineKeyboardButton(text="⚙ Настройки", callback_data="kanban:settings"))
+        if is_owner:
+            kb.row(InlineKeyboardButton(text="⚙ Настройки", callback_data="kanban:settings"))
 
     await callback.message.edit_text(
         "📊 <b>Канбан-доска</b>\n\n"

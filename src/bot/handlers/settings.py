@@ -48,7 +48,7 @@ async def _render_menu(telegram_id: int) -> tuple[str, InlineKeyboardMarkup]:
         f"🌍 Часовой пояс: <b>{tz_short(s.timezone)}</b>\n"
         f"🔄 Авто-ответ: {_check(s.auto_reply_enabled)} (кулдаун {s.auto_reply_cooldown_min}м)\n"
         f"☀ Дайджест: {_check(s.digest_enabled)} ({s.digest_time})\n"
-        f"⏰ Напоминания: {_check(s.reminders_enabled)} (за {s.reminder_lead_hours}ч; просрочки {_check(s.reminder_overdue_enabled)})\n"
+        f"⏰ Напоминания: {_check(s.reminders_enabled)} (за {s.reminder_lead_hours}ч; просрочки {_check(s.reminder_overdue_enabled)}; {s.reminder_work_hours_start}:00–{s.reminder_work_hours_end}:00, будни)\n"
         f"📰 Новости: {_check(s.news_enabled)} (окно {s.news_window_hours}ч)\n"
         f"🛡 Игнорировать архив: {_check(s.ignore_archived)}\n"
         f"🤖 LLM: <b>{s.llm_provider}</b> · {'тяжёлая' if s.use_heavy_model else 'лёгкая'}\n"
@@ -133,6 +133,8 @@ CHOICE_KEYS = {
 NUMERIC_KEYS = {
     "auto_reply_cooldown_min",
     "reminder_lead_hours",
+    "reminder_work_hours_start",
+    "reminder_work_hours_end",
     "news_window_hours",
 }
 
@@ -177,6 +179,21 @@ async def cb_choose(callback: CallbackQuery) -> None:
     await _refresh_section(callback, _section_for_key(key))
 
 
+@router.callback_query(F.data.startswith("set:wd:"))
+async def cb_toggle_work_day(callback: CallbackQuery) -> None:
+    day = callback.data.split(":", 2)[2]
+    async with get_session() as session:
+        owner = await get_or_create_user(session, callback.from_user.id)
+        days = {d.strip() for d in owner.settings.reminder_work_days.split(",") if d.strip()}
+        if day in days:
+            days.discard(day)
+        else:
+            days.add(day)
+        owner.settings.reminder_work_days = ",".join(sorted(days, key=int))
+    await callback.answer("Готово")
+    await _refresh_section(callback, "reminders")
+
+
 def _section_for_key(key: str) -> str:
     return {
         "auto_reply_enabled": "auto_reply",
@@ -188,6 +205,8 @@ def _section_for_key(key: str) -> str:
         "reminders_enabled": "reminders",
         "reminder_lead_hours": "reminders",
         "reminder_overdue_enabled": "reminders",
+        "reminder_work_hours_start": "reminders",
+        "reminder_work_hours_end": "reminders",
         "news_enabled": "news",
         "news_window_hours": "news",
         "llm_provider": "llm",
@@ -290,13 +309,21 @@ async def _render_section(telegram_id: int, section: str) -> tuple[str, InlineKe
         kb.row(*_back_row())
 
     elif section == "reminders":
+        work_days_set = {d.strip() for d in s.reminder_work_days.split(",")}
+        day_labels = [("1", "Пн"), ("2", "Вт"), ("3", "Ср"), ("4", "Чт"), ("5", "Пт"), ("6", "Сб"), ("7", "Вс")]
+        day_line = " ".join(
+            f"{'☑' if d in work_days_set else '☐'}{l}"
+            for d, l in day_labels
+        )
         text = (
             "⏰ <b>Напоминания о дедлайнах</b>\n\n"
             "Бот подгружает обещания из переписок (см. /todos и кнопку «Задачи» в /chat) и пинает, "
             "когда дедлайн близок или просрочен.\n\n"
             f"Статус: <b>{'ВКЛ' if s.reminders_enabled else 'ВЫКЛ'}</b>\n"
             f"Заранее за: <b>{s.reminder_lead_hours} ч</b>\n"
-            f"Алерт о просрочках: <b>{'ВКЛ' if s.reminder_overdue_enabled else 'ВЫКЛ'}</b>"
+            f"Алерт о просрочках: <b>{'ВКЛ' if s.reminder_overdue_enabled else 'ВЫКЛ'}</b>\n"
+            f"Рабочие часы: <b>{s.reminder_work_hours_start}:00 – {s.reminder_work_hours_end}:00</b>\n"
+            f"Рабочие дни: {day_line}"
         )
         kb.row(InlineKeyboardButton(
             text=f"{_check(s.reminders_enabled)} Включить напоминания",
@@ -311,6 +338,24 @@ async def _render_section(telegram_id: int, section: str) -> tuple[str, InlineKe
                 text=("• " if s.reminder_lead_hours == h else "") + f"{h}ч",
                 callback_data=f"set:choose:reminder_lead_hours:{h}",
             ) for h in (1, 2, 4, 12, 24)
+        ])
+        kb.row(*[
+            InlineKeyboardButton(
+                text=("• " if s.reminder_work_hours_start == h else "") + f"{h}:00",
+                callback_data=f"set:choose:reminder_work_hours_start:{h}",
+            ) for h in (8, 9, 10, 11)
+        ])
+        kb.row(*[
+            InlineKeyboardButton(
+                text=("• " if s.reminder_work_hours_end == h else "") + f"{h}:00",
+                callback_data=f"set:choose:reminder_work_hours_end:{h}",
+            ) for h in (17, 18, 19, 20, 21, 22)
+        ])
+        kb.row(*[
+            InlineKeyboardButton(
+                text=f"{'☑' if d in work_days_set else '☐'} {l}",
+                callback_data=f"set:wd:{d}",
+            ) for d, l in day_labels
         ])
         kb.row(*_back_row())
 

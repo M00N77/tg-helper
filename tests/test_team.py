@@ -1,7 +1,10 @@
 """Тесты для командной работы: Team + TeamMember в repo.py и filters.py."""
+from unittest.mock import patch
+
 import pytest
 
 from src.db.models import Team, TeamMember
+from src.bot.filters import is_team_owner
 from src.db.repo import (
     add_team_member,
     create_team,
@@ -141,6 +144,89 @@ async def test_owner_allowed_ids():
     assert settings.owner_telegram_id == 6235799942
     assert isinstance(settings.all_allowed_ids, set)
     assert settings.owner_telegram_id in settings.all_allowed_ids
+
+
+class FakeUser:
+    def __init__(self, id):
+        self.id = id
+
+class FakeChat:
+    def __init__(self, id):
+        self.id = id
+
+class FakeMessage:
+    def __init__(self, user_id, chat_id):
+        self.from_user = FakeUser(user_id)
+        self.chat = FakeChat(chat_id)
+
+
+class FakeSessionCM:
+    def __init__(self, session):
+        self.session = session
+    async def __aenter__(self):
+        return self.session
+    async def __aexit__(self, *args):
+        return False
+
+
+@pytest.mark.asyncio
+async def test_is_team_owner_returns_true_for_owner(session):
+    team = await create_team(
+        session,
+        name="Owner Test",
+        telegram_chat_id=-1008888888888,
+        owner_telegram_id=100500,
+    )
+    await add_team_member(session, team.id, 100500, role="admin")
+
+    with patch("src.bot.filters.get_session", return_value=FakeSessionCM(session)):
+        msg = FakeMessage(user_id=100500, chat_id=-1008888888888)
+        assert await is_team_owner(msg) is True
+
+
+@pytest.mark.asyncio
+async def test_is_team_owner_returns_false_for_member(session):
+    team = await create_team(
+        session,
+        name="Owner Test 2",
+        telegram_chat_id=-1009999999999,
+        owner_telegram_id=100500,
+    )
+    await add_team_member(session, team.id, 200500, role="member")
+
+    with patch("src.bot.filters.get_session", return_value=FakeSessionCM(session)):
+        msg = FakeMessage(user_id=200500, chat_id=-1009999999999)
+        assert await is_team_owner(msg) is False
+
+
+@pytest.mark.asyncio
+async def test_is_team_owner_returns_true_for_global_owner(session):
+    team = await create_team(
+        session,
+        name="Global Owner Test",
+        telegram_chat_id=-1001010101010,
+        owner_telegram_id=100500,
+    )
+    await add_team_member(session, team.id, 100500, role="admin")
+
+    with patch("src.bot.filters.get_session", return_value=FakeSessionCM(session)):
+        msg = FakeMessage(user_id=settings.owner_telegram_id, chat_id=-1001010101010)
+        assert await is_team_owner(msg) is True
+
+
+@pytest.mark.asyncio
+async def test_is_team_owner_returns_false_for_non_member(session):
+    team = await create_team(
+        session,
+        name="Non Member Test",
+        telegram_chat_id=-1001111111111,
+        owner_telegram_id=100500,
+    )
+    await add_team_member(session, team.id, 100500, role="admin")
+
+    with patch("src.bot.filters.get_session", return_value=FakeSessionCM(session)):
+        msg = FakeMessage(user_id=999999, chat_id=-1001111111111)
+        assert await is_team_owner(msg) is False
 
 
 @pytest.mark.asyncio
