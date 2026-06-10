@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from src.config import settings as app_settings
 from src.core.notifier import notifier
-from src.core.timeutil import fmt_local
+from src.core.timeutil import fmt_local, now_in_tz
 from src.db.models import Commitment
 from src.db.repo import get_or_create_user
 from src.db.session import get_session
@@ -29,6 +29,17 @@ async def _check_once(owner_telegram_id: int) -> None:
         owner = await get_or_create_user(session, owner_telegram_id)
         s = owner.settings
         if not s.reminders_enabled:
+            return
+
+        local_now = now_in_tz(s.timezone)
+        current_hour = local_now.hour
+        current_weekday = local_now.isoweekday()
+        if current_hour < s.reminder_work_hours_start or current_hour >= s.reminder_work_hours_end:
+            logger.debug("Outside work hours (%d-%d), skipping reminders", s.reminder_work_hours_start, s.reminder_work_hours_end)
+            return
+        work_days = {int(d.strip()) for d in s.reminder_work_days.split(",") if d.strip()}
+        if current_weekday not in work_days:
+            logger.debug("Not a work day (today=%d, work_days=%s), skipping reminders", current_weekday, s.reminder_work_days)
             return
 
         lead_hours = max(0, int(s.reminder_lead_hours))

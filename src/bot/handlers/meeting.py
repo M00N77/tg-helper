@@ -1,13 +1,11 @@
 """Обработка встреч: транскрипция аудио/видео, саммари, создание задач на YouGile."""
-import json
 import logging
 from pathlib import Path
 
-from src.bot.filters import OwnerOrTeamMember
+from aiogram import Router, F
 
 
 def detect_platform(url: str) -> str:
-    """Определить платформу видеоконференции по URL встречи."""
     url_lower = url.lower()
     if "telemost.yandex" in url_lower:
         return "yandex"
@@ -20,51 +18,31 @@ def detect_platform(url: str) -> str:
     if "zoom.us" in url_lower or "zoom.com" in url_lower:
         return "zoom"
     return "unknown"
-
-from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardButton
 
-
-from src.core.transcription import transcription_service
+from src.bot.filters import OwnerOrTeamMember
 from src.db.repo import (
     create_meeting,
     get_or_create_user,
     get_team_by_chat,
-    get_api_key,
-    set_active_board,
-    update_meeting_summary,
-    update_meeting_transcript,
+    get_pending_action,
+    delete_pending_action,
 )
 from src.db.session import get_session
-from src.llm.router import get_provider_chain, llm_with_fallback
-from src.llm.base import ChatMessage
-from src.bot.handlers.yougile import YouGileClient
+from src.core.meeting_processor import process_meeting_audio, create_yougile_tasks_from_meeting
 from src.config import settings as app_settings
+from src.db.models import Team
 
 
 logger = logging.getLogger(__name__)
 
 router = Router(name="meeting")
 router.message.filter(OwnerOrTeamMember())
-
-MEETING_EXTRACT_SYSTEM = (
-    "Ты анализируешь транскрипцию встречи.\n"
-    "Верни СТРОГИЙ JSON (без markdown-обёртки):\n"
-    '{\n'
-    '  "summary": "саммари встречи 3-5 предложений",\n'
-    '  "participants": ["имя1", "имя2"],\n'
-    '  "tasks": [\n'
-    '    {"title": "название задачи", "assignee": "имя или null", "deadline": "ISO-8601 или null"},\n'
-    '    ...\n'
-    '  ]\n'
-    '}\n'
-    'Если задач нет — tasks: [].\n'
-    "Опирайся только на то, что сказано в тексте."
-)
+router.callback_query.filter(OwnerOrTeamMember())
 
 
 @router.message(Command("meeting"))
@@ -181,248 +159,38 @@ async def handle_meeting_file(message: Message, state: FSMContext):
 
     target = media_dir / f"meeting_{message.message_id}{suffix}"
 
+    notice = await message.answer("⏳ Получаю файл…")
     try:
-        notice = await message.answer("⏳ Получаю файл…")
-        try:
-            await message.bot.download(media.file_id, destination=str(target))
-        except Exception as e:
-            await notice.edit_text(f"❌ Не удалось скачать файл: {e}")
-            return
+        await message.bot.download(media.file_id, destination=str(target))
+    except Exception as e:
+        await notice.edit_text(f"❌ Не удалось скачать файл: {e}")
+        return
 
+    async with get_session() as session:
+        owner = await get_or_create_user(session, message.from_user.id)
+        team = await get_team_by_chat(session, message.chat.id)
+
+    meeting_id = None
+    if team:
         async with get_session() as session:
-            owner = await get_or_create_user(session, message.from_user.id)
-            mode = owner.settings.transcription_mode
-            openai_key = await get_api_key(session, owner, "openai")
-
-        await notice.edit_text("🎙 Транскрибирую запись встречи…")
-        try:
-            transcript = await transcription_service.transcribe(
-                target,
-                file_id=str(message.message_id),
-                mode=mode,
-                openai_key=openai_key,
-                language="ru",
+            meeting = await create_meeting(
+                session, team.id, f"upload:{message.message_id}",
             )
-        except Exception as e:
-            await notice.edit_text(f"❌ Ошибка транскрипции: {e}")
-            return
+            meeting_id = meeting.id
 
-        if not transcript or not transcript.strip():
-            await notice.edit_text("❌ Не удалось распознать речь в файле.")
-            return
+    if not meeting_id:
+        await notice.edit_text("❌ Команда не найдена.")
+        return
 
-        async with get_session() as session:
-            owner = await get_or_create_user(session, message.from_user.id)
-            providers = await get_provider_chain(session, owner)
-
-        if not providers:
-            await notice.edit_text(
-                f"✅ Транскрипция готова:\n\n{transcript[:1000]}…\n\n"
-                "⚠️ Добавь LLM-ключ в /settings чтобы извлечь задачи."
-            )
-            return
-
-        async with get_session() as session:
-            team = await get_team_by_chat(session, message.chat.id)
-
-        meeting_id: int | None = None
-        if team:
-            async with get_session() as session:
-                meeting = await create_meeting(
-                    session, team.id, f"upload:{message.message_id}",
-                )
-                meeting_id = meeting.id
-
-        await notice.edit_text("🤖 Анализирую встречу…")
-        try:
-            raw = await llm_with_fallback(
-                providers,
-                [
-                    ChatMessage(role="system", content=MEETING_EXTRACT_SYSTEM),
-                    ChatMessage(role="user", content=f"Транскрипция:\n\n{transcript[:8000]}"),
-                ],
-                heavy=True,
-                notify_bot=message.bot,
-                notify_chat_id=message.chat.id,
-            )
-            data = json.loads(raw.strip().strip("```").lstrip("json").strip())
-            summary = data.get("summary", "")
-            tasks = data.get("tasks", [])
-
-            if meeting_id:
-                async with get_session() as session:
-                    await update_meeting_transcript(session, meeting_id, transcript, str(target))
-                    if summary:
-                        await update_meeting_summary(session, meeting_id, summary)
-        except Exception as e:
-            await notice.edit_text(
-                f"✅ Транскрипция готова, но разбор не удался: {e}\n\n"
-                f"{transcript[:800]}"
-            )
-            return
-
-        created_count = 0
-        created_tasks: list[str] = []
-        board_title = ""
-        first_col_title = ""
-        needs_board_selection = False
-        all_boards: list[dict] = []
-
-        if team and team.kanban_token and tasks:
-            board_id = team.active_board_id or team.kanban_board_id
-            if board_id:
-                client = YouGileClient(team.kanban_token, board_id)
-                try:
-                    boards_data = await client.get_boards()
-                    for b in boards_data:
-                        if b["id"] == board_id:
-                            board_title = b.get("title", "")
-                            break
-                    columns = await client.get_columns()
-                    if columns:
-                        first_col_id = columns[0]["id"]
-                        first_col_title = columns[0].get("title", "")
-                    else:
-                        first_col_id = None
-                except Exception:
-                    first_col_id = None
-
-                if first_col_id:
-                    for task in tasks[:10]:
-                        title = (task.get("title") or "").strip()
-                        if not title:
-                            continue
-                        try:
-                            deadline_raw = task.get("deadline") or ""
-                            deadline = deadline_raw[:10] if deadline_raw else None
-                            card = await client.create_card(title, "", first_col_id, deadline=deadline)
-                            created_tasks.append(card.get("title", title))
-                            created_count += 1
-                        except Exception:
-                            pass
-            else:
-                try:
-                    tmp_client = YouGileClient(team.kanban_token)
-                    all_boards = await tmp_client.get_boards()
-                except Exception:
-                    all_boards = []
-
-                if len(all_boards) == 1:
-                    b = all_boards[0]
-                    async with get_session() as session:
-                        await set_active_board(session, message.chat.id, b["id"], b["title"])
-                    board_id = b["id"]
-                    board_title = b["title"]
-                    client = YouGileClient(team.kanban_token, board_id)
-                    try:
-                        columns = await client.get_columns()
-                        if columns:
-                            first_col_id = columns[0]["id"]
-                            first_col_title = columns[0].get("title", "")
-                        else:
-                            first_col_id = None
-                    except Exception:
-                        first_col_id = None
-                    if first_col_id:
-                        for task in tasks[:10]:
-                            title = (task.get("title") or "").strip()
-                            if not title:
-                                continue
-                            try:
-                                deadline_raw = task.get("deadline") or ""
-                                deadline = deadline_raw[:10] if deadline_raw else None
-                                card = await client.create_card(title, "", first_col_id, deadline=deadline)
-                                created_tasks.append(card.get("title", title))
-                                created_count += 1
-                            except Exception:
-                                pass
-                elif len(all_boards) > 1:
-                    await state.update_data(pending_tasks=tasks[:10])
-                    needs_board_selection = True
-
-        duration_str = ""
-        if duration_sec:
-            h = duration_sec // 3600
-            m = (duration_sec % 3600) // 60
-            s = duration_sec % 60
-            if h:
-                duration_str = f"{h}ч {m}мин"
-            elif m:
-                duration_str = f"{m}мин {s}сек"
-            else:
-                duration_str = f"{s}сек"
-        lines = [f"📋 <b>Встреча — саммари</b>" + (f" · ⏱ {duration_str}" if duration_str else "") + f"\n\n{summary}"]
-
-        if tasks:
-            lines.append(f"\n✅ <b>Задачи ({len(tasks)}):</b>")
-            for t in tasks[:10]:
-                title = t.get("title", "?")
-                assignee = t.get("assignee")
-                deadline = t.get("deadline")
-                tail = ""
-                if assignee:
-                    tail += f" · {assignee}"
-                if deadline:
-                    tail += f" · {deadline[:10]}"
-                lines.append(f"  • {title}{tail}")
-        else:
-            lines.append("\nЗадач не выявлено.")
-
-        if created_count > 0:
-            board_part = f"«{board_title}»" if board_title else "YouGile"
-            col_part = f" (колонка «{first_col_title}»)" if first_col_title else ""
-            lines.append(f"\n📊 <b>Создано на доске {board_part}{col_part}:</b>")
-            for t in created_tasks:
-                lines.append(f"  • {t}")
-            lines.append(f"📋 Доска: {team.active_board_name or 'по умолчанию'}")
-            # Change C: свежий срез доски после создания задач
-            try:
-                snapshot = await build_board_text(
-                    client,
-                    f"📊 Текущее состояние доски «{board_title or board_id}»",
-                )
-                lines.append(f"\n{snapshot}")
-            except Exception:
-                pass
-        elif tasks and (not team or not team.kanban_token):
-            lines.append("\n💡 Подключи YouGile (/kanban) чтобы задачи создавались автоматически.")
-
-        if duration_sec and duration_sec >= 120 and tasks:
-            people = list({t.get("assignee") for t in tasks if t.get("assignee")})
-            per_person = duration_sec // 60
-            lines.append(f"\n⏱ <b>Трудозатраты встречи:</b>")
-            lines.append(f"  Длительность: {duration_str}")
-            if people:
-                lines.append(f"  Участники: {', '.join(people)}")
-                lines.append(f"  ~{per_person} мин/чел (равномерно)")
-            lines.append(f"  Итого: ~{len(people) * per_person if people else per_person} чел·мин")
-
-        if needs_board_selection:
-            lines.append("\n\n📋 <b>Выбери доску для создания задач:</b>")
-            kb = InlineKeyboardBuilder()
-            for b in all_boards:
-                kb.row(InlineKeyboardButton(
-                    text=b["title"],
-                    callback_data=f"sb:{b['id']}",
-                ))
-            await notice.edit_text(
-                "\n".join(lines)[:4000],
-                parse_mode="HTML",
-                reply_markup=kb.as_markup(),
-            )
-        else:
-            kb = InlineKeyboardBuilder()
-            kb.button(text="📊 Открыть доску", callback_data="meeting:yougile")
-            await notice.edit_text(
-                "\n".join(lines)[:4000],
-                parse_mode="HTML",
-                reply_markup=kb.as_markup(),
-            )
-    finally:
-        try:
-            target.unlink(missing_ok=True)
-        except Exception:
-            pass
+    await process_meeting_audio(
+        audio_path=target,
+        meeting_id=meeting_id,
+        chat_id=message.chat.id,
+        bot=message.bot,
+        team=team,
+        owner_telegram_id=message.from_user.id,
+        notice_message=notice,
+    )
 
 
 from src.bot.handlers.kanban import build_board_text
@@ -443,4 +211,43 @@ async def cb_meeting_yougile(callback: CallbackQuery):
     client = YouGileClient(team.kanban_token, board_id)
     text = await build_board_text(client, "📊 Доска")
     await callback.message.answer(text, parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mtask:confirm:"))
+async def cb_mtask_confirm(callback: CallbackQuery) -> None:
+    action_id = int(callback.data.split(":")[2])
+    
+    async with get_session() as session:
+        action = await get_pending_action(session, action_id)
+        if action is None or action.kind != "meeting_tasks":
+            await callback.answer("Действие устарело или уже обработано", show_alert=True)
+            return
+        payload = action.payload
+        tasks = payload["tasks"]
+        meeting_id = payload["meeting_id"]
+        team = await session.get(Team, payload["team_id"])
+        await delete_pending_action(session, action_id)
+    
+    if not team or not team.kanban_token:
+        await callback.message.edit_text("❌ Канбан больше не подключён. Задачи не созданы.")
+        await callback.answer()
+        return
+    
+    # Create tasks in YouGile
+    created, failed, titles, board_name = await create_yougile_tasks_from_meeting(
+        team, tasks, meeting_id, callback.message.chat.id, callback.bot
+    )
+    
+    result = "✅ Задачи созданы!" if failed == 0 else f"✅ {created} создано, {failed} с ошибками"
+    await callback.message.edit_text(f"{result}\n\n📋 Доска: {board_name or 'по умолчанию'}")
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mtask:cancel:"))
+async def cb_mtask_cancel(callback: CallbackQuery) -> None:
+    action_id = int(callback.data.split(":")[2])
+    async with get_session() as session:
+        await delete_pending_action(session, action_id)
+    await callback.message.edit_text("❌ Создание задач отменено.")
     await callback.answer()

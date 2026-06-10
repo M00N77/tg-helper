@@ -5,7 +5,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from src.bot.filters import OwnerOrTeamMember
+from src.bot.filters import OwnerOrTeamMember, is_team_owner
 from src.bot.states import TeamStates
 from src.db.models import Team
 from src.db.repo import (
@@ -256,6 +256,8 @@ async def cb_team_settings(callback: CallbackQuery):
         await callback.answer()
         return
 
+    is_owner = await is_team_owner(callback)
+
     text = (
         f"⚙ <b>Настройки команды «{team.name}»</b>\n\n"
         f"🆔 ID: {team.id}\n"
@@ -264,7 +266,7 @@ async def cb_team_settings(callback: CallbackQuery):
     )
 
     kb = InlineKeyboardBuilder()
-    if team.kanban_token:
+    if team.kanban_token and is_owner:
         kb.row(InlineKeyboardButton(text="📊 Настроить канбан", callback_data="team:kanban"))
     kb.row(InlineKeyboardButton(text="◀ Назад", callback_data="team:back"))
 
@@ -308,16 +310,22 @@ async def cb_team_kanban(callback: CallbackQuery):
         await callback.answer()
         return
 
+    is_owner = await is_team_owner(callback)
+
     text = f"📊 <b>Канбан команды «{team.name}»</b>\n\n"
 
     kb = InlineKeyboardBuilder()
     if team.kanban_token:
-        kb.row(InlineKeyboardButton(text="📋 Выбрать доску", callback_data="kanban:board"))
-        kb.row(InlineKeyboardButton(text="🔄 Сменить токен", callback_data="kanban:relogin"))
-        kb.row(InlineKeyboardButton(text="🔗 Отключить канбан", callback_data="kanban:disconnect"))
+        kb.row(InlineKeyboardButton(text="📊 Показать доску", callback_data="kanban:board"))
+        if is_owner:
+            kb.row(InlineKeyboardButton(text="📋 Выбрать доску", callback_data="kanban:change_board"))
+            kb.row(InlineKeyboardButton(text="🔄 Сменить токен", callback_data="kanban:relogin"))
+            kb.row(InlineKeyboardButton(text="🔗 Отключить канбан", callback_data="kanban:disconnect"))
     else:
-        text += "Канбан не подключён. Нажмите кнопку ниже, чтобы подключить YouGile."
-        kb.row(InlineKeyboardButton(text="🔑 Войти в YouGile", callback_data="kanban:setup"))
+        text += "Канбан не подключён."
+        if is_owner:
+            text += " Нажмите кнопку ниже, чтобы подключить YouGile."
+            kb.row(InlineKeyboardButton(text="🔑 Войти в YouGile", callback_data="kanban:setup"))
     kb.row(InlineKeyboardButton(text="◀ Назад", callback_data="team:back"))
 
     await callback.message.edit_text(text, reply_markup=kb.as_markup())

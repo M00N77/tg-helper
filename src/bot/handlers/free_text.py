@@ -33,6 +33,9 @@ from src.db.repo import (
     get_team_by_chat,
     list_news_topics,
     list_open_commitments,
+    list_trashed_commitments,
+    restore_commitment,
+    trash_commitment,
     update_commitment_status,
     upsert_api_key,
     upsert_contact,
@@ -160,8 +163,12 @@ async def _exec_kanban_intent(intent: dict, message: Message) -> None:
     async with get_session() as session:
         team = await get_team_by_chat(session, message.chat.id)
 
+    if not team or not team.kanban_token:
+        await message.answer("⚠️ Доска для задач не выбрана. Пожалуйста, выберите нужную доску в настройках команды, чтобы я мог создавать карточки.")
+        return
+
     board_id = team.active_board_id or team.kanban_board_id
-    if not team or not team.kanban_token or not board_id:
+    if not board_id:
         await message.answer("⚠️ Доска для задач не выбрана. Пожалуйста, выберите нужную доску в настройках команды, чтобы я мог создавать карточки.")
         return
 
@@ -178,6 +185,8 @@ async def _exec_kanban_intent(intent: dict, message: Message) -> None:
             return
         description = _get("description")
         column_query = _get("column")
+        deadline_raw = _get("deadline") or None
+        assignee_name = _get("assignee") or None
         try:
             columns = await client.get_columns()
         except Exception as e:
@@ -195,13 +204,25 @@ async def _exec_kanban_intent(intent: dict, message: Message) -> None:
             if not column_id:
                 await message.answer("❌ На доске нет колонок.")
                 return
+        assignee_ids = None
+        if assignee_name:
+            uid = await client.resolve_user_by_name(assignee_name)
+            if uid:
+                assignee_ids = [uid]
         try:
-            await client.create_card(title, description, column_id)
+            await client.create_card(title, description, column_id,
+                                     assignee_ids=assignee_ids,
+                                     deadline=deadline_raw)
         except Exception as e:
             await message.answer(f"❌ Ошибка при создании задачи: {e}")
             return
         board_name = team.active_board_name or "по умолчанию"
-        await message.answer(f"✅ Задача «{title}» создана!\n📋 Доска: {board_name}")
+        tail = ""
+        if assignee_ids:
+            tail += f"\n👤 Исполнитель: {assignee_name}"
+        if deadline_raw:
+            tail += f"\n📅 Дедлайн: {deadline_raw}"
+        await message.answer(f"✅ Задача «{title}» создана!\n📋 Доска: {board_name}{tail}")
 
     elif kind == "show_boards":
         try:
@@ -345,6 +366,42 @@ async def _execute_intent(intent, message, state, userbot_manager, *, tz_name: s
         await message.answer(
             f"📋 Открытых обязательств: <b>{len(items)}</b>\n\n" + "\n".join(lines)
         )
+        return
+
+    if kind == "trash_task":
+        query = (intent.get("query") or "").strip().lower()
+        if not query:
+            await message.answer("Какое обязательство убрать в корзину?")
+            return
+        async with get_session() as session:
+            owner = await get_or_create_user(session, message.from_user.id)
+            items = await list_open_commitments(session, owner)
+            matched = [c for c in items if query in (c.text or "").lower()]
+            if not matched:
+                await message.answer(f"Не нашёл обязательств по «{query}».")
+                return
+            for c in matched:
+                await trash_commitment(session, c.id)
+        names = "\n".join(f"• {c.text}" for c in matched)
+        await message.answer(f"🗑 Переместил в корзину ({len(matched)}):\n{names}")
+        return
+
+    if kind == "restore_task":
+        query = (intent.get("query") or "").strip().lower()
+        if not query:
+            await message.answer("Какое обязательство восстановить?")
+            return
+        async with get_session() as session:
+            owner = await get_or_create_user(session, message.from_user.id)
+            items = await list_trashed_commitments(session, owner)
+            matched = [c for c in items if query in (c.text or "").lower()]
+            if not matched:
+                await message.answer(f"Не нашёл в корзине по «{query}».")
+                return
+            for c in matched:
+                await restore_commitment(session, c.id)
+        names = "\n".join(f"• {c.text}" for c in matched)
+        await message.answer(f"♻ Восстановил из корзины ({len(matched)}):\n{names}")
         return
 
     if client is None:
@@ -713,6 +770,10 @@ def _summarize_intent_for_memory(intent: dict) -> str:
         return f"вытащил обещания из чата с {intent.get('contact')}"
     if kind == "list_todos":
         return "показал список обещаний"
+    if kind == "trash_task":
+        return f"удалил в корзину: {intent.get('query')}"
+    if kind == "restore_task":
+        return f"восстановил из корзины: {intent.get('query')}"
     if kind == "join_meeting":
         url = intent.get("url", "")
         return f"подключился к встрече: {url}" if url else "запросил ссылку на встречу"
@@ -732,6 +793,7 @@ def _extract_tasks_from_intent(intent: dict) -> list[dict]:
             "title": intent.get("title", ""),
             "description": intent.get("description", ""),
             "deadline": intent.get("deadline"),
+            "assignee": intent.get("assignee"),
         }]
     if kind == "multi":
         result = []
@@ -741,6 +803,7 @@ def _extract_tasks_from_intent(intent: dict) -> list[dict]:
                     "title": act.get("title", ""),
                     "description": act.get("description", ""),
                     "deadline": act.get("deadline"),
+                    "assignee": act.get("assignee"),
                 })
         return result
     return []
@@ -887,6 +950,7 @@ async def free_voice(
             "title": t.get("title", ""),
             "description": t.get("description", ""),
             "deadline": t.get("deadline"),
+            "assignee": t.get("assignee"),
         } for t in raw_tasks]
 
         # --- ACCUMULATION: voice while waiting_for_board ---
@@ -1020,7 +1084,10 @@ async def _exec_meeting_intent(intent: dict, message: Message) -> None:
             title = intent.get("title", "Встреча")
             starts_at = intent.get("datetime")
             try:
-                url = await create_meeting_room(title, mtslink_token, starts_at)
+                url, event_id, session_id = await create_meeting_room(
+                    title, mtslink_token, starts_at,
+                    team_chat_id=message.chat.id if mtslink_token else None,
+                )
             except Exception as e:
                 await message.answer(f"❌ Не удалось создать встречу: {e}")
                 return
@@ -1029,7 +1096,7 @@ async def _exec_meeting_intent(intent: dict, message: Message) -> None:
 
             if team:
                 async with get_session() as session:
-                    await create_meeting(session, team.id, url, platform)
+                    await create_meeting(session, team.id, url, platform, event_id, mtslink_session_id=session_id)
 
             parts = [f"📅 <b>Встреча создана</b>\n\nНазвание: <b>{title}</b>"]
             if starts_at:
@@ -1053,7 +1120,7 @@ async def _exec_meeting_intent(intent: dict, message: Message) -> None:
             return
 
         if kind == "join_meeting":
-            url = intent.get("url", "").strip()
+            url = (intent.get("url") or "").strip()
             if url:
                 platform = detect_platform(url)
                 if team:
@@ -1275,11 +1342,18 @@ async def cb_voice_board_select(callback: CallbackQuery, state: FSMContext) -> N
         title = (task.get("title") or "").strip()
         if not title:
             continue
+        assignee_name = task.get("assignee")
+        assignee_ids = None
+        if assignee_name:
+            uid = await client.resolve_user_by_name(assignee_name)
+            if uid:
+                assignee_ids = [uid]
         try:
             await client.create_card(
                 title=title,
                 description=task.get("description", ""),
                 column_id=first_col_id,
+                assignee_ids=assignee_ids,
                 deadline=task.get("deadline"),
             )
             created += 1

@@ -7,11 +7,24 @@ from src.core.digest import digest_scheduler_loop
 from src.core.evening_digest import evening_digest_loop
 from src.core.news import news_scheduler_loop
 from src.core.reminders import reminders_loop
-from src.db.session import init_db
+from src.db.session import init_db, get_session
 from src.userbot.manager import UserbotManager
 
 
 logger = logging.getLogger(__name__)
+
+
+async def _clean_trash_loop() -> None:
+    from src.db.repo import hard_delete_expired_trash
+    while True:
+        try:
+            async with get_session() as session:
+                deleted = await hard_delete_expired_trash(session)
+                if deleted:
+                    logger.info("Trash cleaner: hard-deleted %d expired commitments", deleted)
+        except Exception:
+            logger.exception("trash cleaner error")
+        await asyncio.sleep(3600)
 
 
 async def main() -> None:
@@ -32,6 +45,7 @@ async def main() -> None:
         asyncio.create_task(reminders_loop(), name="reminders-loop"),
         asyncio.create_task(news_scheduler_loop(), name="news-scheduler"),
         asyncio.create_task(auto_sync_loop(), name="auto-sync"),
+        asyncio.create_task(_clean_trash_loop(), name="trash-cleaner"),
     ]
 
     try:

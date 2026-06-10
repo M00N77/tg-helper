@@ -122,6 +122,16 @@ AGENT_SYSTEM = """\
     Используй для «поставь напоминания из чата с Артёмом», «выкуси задачи из переписки
     с боссом и поставь напоминания».
 
+11.4) "trash_task" — переместить обязательство в корзину (soft-delete).
+    Параметры:
+      "query": "подстрока в тексте обязательства".
+    Используй для фраз: «удали обещание», «в корзину», «выброси задачу».
+
+11.5) "restore_task" — восстановить обязательство из корзины.
+    Параметры:
+      "query": "подстрока в тексте обязательства".
+    Используй для фраз: «восстанови обещание», «верни из корзины».
+
 12) "chat"         — просто ответить владельцу текстом (общий вопрос/болтовня/совет/
     объяснение, не требующее действий с Telegram).
     Параметры: "reply": "готовый ответ в свободной форме (можно несколько абзацев,
@@ -143,7 +153,9 @@ AGENT_SYSTEM = """\
     Параметры:
       "title":       "название задачи (обязательно)",
       "description": "описание задачи (опционально)",
-      "column":      "название колонки (опционально, по умолчанию первая)".
+      "column":      "название колонки (опционально, по умолчанию первая)",
+      "deadline":    "ISO-8601 дата дедлайна в TZ владельца (опционально, если в речи указан срок)",
+      "assignee":    "имя исполнителя задачи (опционально, если в речи назван исполнитель)".
     Используй для фраз: «создай задачу», «добавь карточку», «новая задача: ...».
 
 15) "show_boards" — показать текущее состояние канбан-доски.
@@ -190,7 +202,9 @@ KANBAN_AGENT_SYSTEM = """\
    Параметры:
      "title":       "название задачи (обязательно)",
      "description": "описание задачи (опционально)",
-     "column":      "название колонки (опционально, по умолчанию первая)".
+     "column":      "название колонки (опционально, по умолчанию первая)",
+     "deadline":    "ISO-8601 дата дедлайна (опционально)",
+     "assignee":    "имя исполнителя задачи (опционально)".
 
 2) "show_boards" — показать содержимое канбан-доски (все колонки с задачами).
    Параметров нет.
@@ -334,6 +348,8 @@ async def process_free_text(
             return "❓ Не понял название задачи. Уточни, что нужно создать."
         description = response.parameters.get("description", "").strip()
         column_query = response.parameters.get("column", "").strip()
+        deadline_raw = response.parameters.get("deadline") or None
+        assignee_name = response.parameters.get("assignee") or None
 
         try:
             columns = await client.get_columns()
@@ -355,14 +371,27 @@ async def process_free_text(
             if not column_id:
                 return "❌ На доске нет колонок."
 
+        assignee_ids = None
+        if assignee_name:
+            uid = await client.resolve_user_by_name(assignee_name)
+            if uid:
+                assignee_ids = [uid]
+
         try:
-            await client.create_card(title, description, column_id)
+            await client.create_card(title, description, column_id,
+                                     assignee_ids=assignee_ids,
+                                     deadline=deadline_raw)
         except Exception as e:
             logger.exception("create_card failed")
             return f"❌ Ошибка при создании задачи: {e}"
 
         board_name = team.active_board_name or "по умолчанию"
-        return f"✅ Задача «{title}» создана!\n📋 Доска: {board_name}"
+        tail = ""
+        if assignee_ids:
+            tail += f"\n👤 Исполнитель: {assignee_name}"
+        if deadline_raw:
+            tail += f"\n📅 Дедлайн: {deadline_raw}"
+        return f"✅ Задача «{title}» создана!\n📋 Доска: {board_name}{tail}"
 
     if response.intent == "show_boards":
         try:

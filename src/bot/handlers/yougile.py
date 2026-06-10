@@ -1,8 +1,20 @@
 """Интеграция с YouGile канбан-доской."""
+from datetime import datetime
 import time
 import httpx
 import logging
 from typing import Dict, List, Optional
+
+from rapidfuzz import fuzz, process
+
+
+def _parse_deadline(s: str) -> dict:
+    with_time = "T" in s
+    dt = datetime.fromisoformat(s)
+    if not with_time:
+        dt = datetime(dt.year, dt.month, dt.day, tzinfo=dt.tzinfo)
+    ts = int(dt.timestamp() * 1000)
+    return {"deadline": ts, "withTime": with_time}
 
 
 class YouGileClient:
@@ -54,7 +66,7 @@ class YouGileClient:
         if assignee_ids:
             payload["assigned"] = assignee_ids
         if deadline:
-            payload["deadline"] = deadline
+            payload["deadline"] = _parse_deadline(deadline)
         logging.warning(f"[YouGile][create_card] payload={payload}")
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
@@ -150,6 +162,17 @@ class YouGileClient:
                 return []
             data = response.json()
             return data.get("content", [])
+
+    async def resolve_user_by_name(self, name: str) -> str | None:
+        """Нечеткий поиск пользователя YouGile по имени. Возвращает user_id или None."""
+        users = await self.get_users()
+        if not users or not name:
+            return None
+        choices = {u["id"]: u.get("name", "") for u in users}
+        raw = process.extractOne(name, choices, scorer=fuzz.WRatio, score_cutoff=60)
+        if raw:
+            return raw[2]  # (match, score, key)
+        return None
 
     async def update_card(self, card_id: str, **kwargs) -> Dict:
         """Обновить карточку"""

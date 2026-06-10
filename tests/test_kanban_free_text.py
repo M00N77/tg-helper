@@ -25,6 +25,8 @@ def _make_team(token="fake-token", board_id="board-123"):
     team = MagicMock()
     team.kanban_token = token
     team.kanban_board_id = board_id
+    team.active_board_id = board_id
+    team.active_board_name = "по умолчанию"
     team.kanban_provider = "yougile"
     return team
 
@@ -54,7 +56,7 @@ class TestExecKanbanIntent:
         with patch("src.bot.handlers.free_text.get_team_by_chat", return_value=None):
             await _exec_kanban_intent({"intent": "create_task", "title": "Test"}, mock_message)
         mock_message.answer.assert_awaited_once()
-        assert "подключи" in mock_message.answer.call_args[0][0]
+        assert "Доска для задач не выбрана" in mock_message.answer.call_args[0][0]
 
     @pytest.mark.asyncio
     async def test_create_task_success(self, mock_message):
@@ -72,8 +74,8 @@ class TestExecKanbanIntent:
                 mock_message,
             )
 
-        mock_client.create_card.assert_awaited_once_with("Test task", "Some desc", "col-1")
-        mock_message.answer.assert_awaited_once_with("✅ Задача «Test task» создана!")
+        mock_client.create_card.assert_awaited_once_with("Test task", "Some desc", "col-1", assignee_ids=None, deadline=None)
+        mock_message.answer.assert_awaited_once_with("✅ Задача «Test task» создана!\n📋 Доска: по умолчанию")
 
     @pytest.mark.asyncio
     async def test_create_task_to_specific_column(self, mock_message):
@@ -91,7 +93,7 @@ class TestExecKanbanIntent:
                 mock_message,
             )
 
-        mock_client.create_card.assert_awaited_once_with("Bug fix", "", "col-2")
+        mock_client.create_card.assert_awaited_once_with("Bug fix", "", "col-2", assignee_ids=None, deadline=None)
 
     @pytest.mark.asyncio
     async def test_create_task_nested_parameters(self, mock_message):
@@ -109,7 +111,7 @@ class TestExecKanbanIntent:
                 mock_message,
             )
 
-        mock_client.create_card.assert_awaited_once_with("Nested task", "", "col-3")
+        mock_client.create_card.assert_awaited_once_with("Nested task", "", "col-3", assignee_ids=None, deadline=None)
 
     @pytest.mark.asyncio
     async def test_create_task_missing_title(self, mock_message):

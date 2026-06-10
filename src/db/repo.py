@@ -393,6 +393,53 @@ async def update_commitment_status(session: AsyncSession, commitment_id: int, st
         c.status = status
 
 
+async def trash_commitment(session: AsyncSession, commitment_id: int) -> bool:
+    c = await session.get(Commitment, commitment_id)
+    if c is None or c.status == "trashed":
+        return False
+    c.status = "trashed"
+    c.deleted_at = datetime.utcnow()
+    return True
+
+
+async def restore_commitment(session: AsyncSession, commitment_id: int) -> bool:
+    c = await session.get(Commitment, commitment_id)
+    if c is None or c.status != "trashed":
+        return False
+    c.status = "open"
+    c.deleted_at = None
+    return True
+
+
+async def list_trashed_commitments(
+    session: AsyncSession,
+    user: User,
+) -> list[Commitment]:
+    query = select(Commitment).where(
+        Commitment.user_id == user.id,
+        Commitment.status == "trashed",
+    )
+    query = query.order_by(Commitment.deleted_at.desc())
+    result = await session.execute(query)
+    return list(result.scalars().all())
+
+
+async def hard_delete_expired_trash(session: AsyncSession) -> int:
+    from datetime import timedelta
+    cutoff = datetime.utcnow() - timedelta(hours=24)
+    result = await session.execute(
+        select(Commitment).where(
+            Commitment.status == "trashed",
+            Commitment.deleted_at.isnot(None),
+            Commitment.deleted_at < cutoff,
+        )
+    )
+    items = list(result.scalars().all())
+    for c in items:
+        await session.delete(c)
+    return len(items)
+
+
 async def add_auto_reply_log(
     session: AsyncSession,
     *,
@@ -588,11 +635,47 @@ async def update_team_kanban(
     return team
 
 
+async def get_meeting_by_mtslink_id(
+    session: AsyncSession, event_id: str
+) -> Meeting | None:
+    from sqlalchemy.orm import joinedload
+    result = await session.execute(
+        select(Meeting)
+        .options(joinedload(Meeting.team))
+        .where(Meeting.mtslink_event_id == event_id)
+    )
+    return result.unique().scalar_one_or_none()
+
+
+async def get_meeting_by_record_id(
+    session: AsyncSession, record_id: str
+) -> Meeting | None:
+    result = await session.execute(
+        select(Meeting).where(Meeting.mtslink_record_id == record_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_meeting_by_mtslink_session_id(
+    session: AsyncSession, session_id: str
+) -> Meeting | None:
+    from sqlalchemy.orm import joinedload
+    result = await session.execute(
+        select(Meeting)
+        .options(joinedload(Meeting.team))
+        .where(Meeting.mtslink_session_id == session_id)
+    )
+    return result.unique().scalar_one_or_none()
+
+
 async def create_meeting(
     session: AsyncSession,
     team_id: int,
     meeting_url: str,
     platform: str = "unknown",
+    mtslink_event_id: str | None = None,
+    mtslink_record_id: str | None = None,
+    mtslink_session_id: str | None = None,
 ) -> Meeting:
     # Ищем активную встречу с таким же URL
     result = await session.execute(
@@ -604,17 +687,33 @@ async def create_meeting(
     )
     existing = result.scalar_one_or_none()
     if existing:
-        return existing  # возвращаем существующую
+        return existing
 
     meeting = Meeting(
         team_id=team_id,
         meeting_url=meeting_url,
         platform=platform,
+        mtslink_event_id=mtslink_event_id,
+        mtslink_record_id=mtslink_record_id,
+        mtslink_session_id=mtslink_session_id,
         status="active",
     )
     session.add(meeting)
     await session.commit()
     await session.refresh(meeting)
+    return meeting
+
+
+async def update_meeting_status(
+    session: AsyncSession,
+    meeting_id: int,
+    status: str,
+) -> Meeting | None:
+    meeting = await session.get(Meeting, meeting_id)
+    if meeting:
+        meeting.status = status
+        await session.commit()
+        await session.refresh(meeting)
     return meeting
 
 
@@ -642,7 +741,62 @@ async def update_meeting_summary(
     meeting = await session.get(Meeting, meeting_id)
     if meeting:
         meeting.summary = summary
+        meeting.status = "analyzed"
+        await session.commit()
+        await session.refresh(meeting)
+    return meeting
+
+
+async def update_meeting_llm_raw(
+    session: AsyncSession,
+    meeting_id: int,
+    raw_output: str,
+) -> Meeting | None:
+    meeting = await session.get(Meeting, meeting_id)
+    if meeting:
+        meeting.raw_llm_output = raw_output
+        await session.commit()
+    return meeting
+
+
+async def update_meeting_record_id(
+    session: AsyncSession,
+    meeting_id: int,
+    record_id: str,
+) -> Meeting | None:
+    meeting = await session.get(Meeting, meeting_id)
+    if meeting:
+        meeting.mtslink_record_id = record_id
+        await session.commit()
+    return meeting
+
+
+async def update_meeting_session_id(
+    session: AsyncSession,
+    meeting_id: int,
+    session_id: str,
+) -> Meeting | None:
+    meeting = await session.get(Meeting, meeting_id)
+    if meeting:
+        meeting.mtslink_session_id = session_id
+        await session.commit()
+    return meeting
+
+
+async def finish_meeting(
+    session: AsyncSession,
+    meeting_id: int,
+    duration_sec: int | None = None,
+) -> Meeting | None:
+    from datetime import datetime, timezone
+
+    meeting = await session.get(Meeting, meeting_id)
+    if meeting:
+        meeting.ended_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        meeting.processed_at = datetime.now(timezone.utc).replace(tzinfo=None)
         meeting.status = "processed"
+        if duration_sec is not None:
+            meeting.duration_sec = duration_sec
         await session.commit()
         await session.refresh(meeting)
     return meeting
@@ -686,6 +840,18 @@ async def delete_pending_invite(
     invite = result.scalar_one_or_none()
     if invite:
         await session.delete(invite)
+
+
+async def update_team_mtslink_token(
+    session: AsyncSession,
+    chat_id: int,
+    token: str,
+) -> None:
+    team = await get_team_by_chat(session, chat_id)
+    if team is None:
+        return
+    team.mtslink_token = token
+    await session.commit()
 
 
 async def set_active_board(

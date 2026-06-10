@@ -55,4 +55,10 @@ class Settings(BaseSettings):
         return {self.owner_telegram_id} | set(self.allowed_telegram_ids)
 
 
+    WEBHOOK_BASE_URL: str = ""
+    NGROK_AUTHTOKEN: str = ""
+    NGROK_ENABLED: bool = False
+    WEBHOOK_PORT: int = 8080
+
+
 settings = Settings()

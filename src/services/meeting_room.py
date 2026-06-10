@@ -35,7 +35,12 @@ def create_jitsi_room(title: str) -> str:
     return f"{JITSI_BASE}/{room}"
 
 
-async def create_mtslink_room(title: str, api_token: str, starts_at: str | None = None) -> str:
+async def create_mtslink_room(
+    title: str,
+    api_token: str,
+    starts_at: str | None = None,
+    team_chat_id: int | None = None,
+) -> tuple[str, str | None, str | None]:
     async with httpx.AsyncClient(timeout=30.0) as client:
         headers = {
             "x-auth-token": api_token,
@@ -50,9 +55,11 @@ async def create_mtslink_room(title: str, api_token: str, starts_at: str | None 
             "accessSettings[isModerationRequired]": "0",
         }
 
-        msk_iso = _to_msk_iso(starts_at)
-        if msk_iso:
-            event_data["startsAtTimestamp"] = msk_iso
+        if starts_at:
+            msk_iso = _to_msk_iso(starts_at)
+        else:
+            msk_iso = datetime.now(MSK).strftime("%Y-%m-%dT%H:%M:%S+03:00")
+        event_data["startsAtTimestamp"] = msk_iso
 
         resp = await client.post(f"{MTSLINK_API}/events", headers=headers, data=event_data)
         if resp.status_code not in (200, 201):
@@ -61,11 +68,11 @@ async def create_mtslink_room(title: str, api_token: str, starts_at: str | None 
             raise RuntimeError(f"МТС Линк: не удалось создать шаблон встречи ({resp.status_code})")
 
         event = resp.json()
-        event_id = event.get("eventId") or event.get("data", {}).get("eventId")
+        event_id = str(event.get("eventId") or event.get("data", {}).get("eventId") or "")
         if not event_id:
             raise RuntimeError("МТС Линк: ответ не содержит eventId")
 
-        session_data = {}
+        session_data = {"startType": "autostart"}
         if msk_iso:
             session_data["startsAtTimestamp"] = msk_iso
 
@@ -81,13 +88,40 @@ async def create_mtslink_room(title: str, api_token: str, starts_at: str | None 
 
         session = sess_resp.json()
         link = session.get("link") or event.get("link", "")
+        session_id = str(
+            session.get("eventSessionId")
+            or session.get("id")
+            or session.get("sessionId")
+            or ""
+        )
         if not link:
             raise RuntimeError("МТС Линк: ответ не содержит ссылку на встречу")
 
-        return link
+        from src.services.mtslink_api import register_record_webhook
+        import src.services.webhook_server as ws_module
+
+        callback_url = getattr(ws_module, "PUBLIC_WEBHOOK_URL", None)
+        if callback_url:
+            await register_record_webhook(api_token, event_id, callback_url)
+
+        if team_chat_id:
+            from src.db.session import get_session
+            from src.db.repo import update_team_mtslink_token
+
+            async with get_session() as session:
+                await update_team_mtslink_token(session, team_chat_id, api_token)
+            logger.info("Saved mtslink_token to team chat_id=%s", team_chat_id)
+
+        return link, event_id, session_id or None
 
 
-async def create_meeting_room(title: str, mtslink_token: str | None = None, starts_at: str | None = None) -> str:
+async def create_meeting_room(
+    title: str,
+    mtslink_token: str | None = None,
+    starts_at: str | None = None,
+    team_chat_id: int | None = None,
+) -> tuple[str, str | None, str | None]:
     if mtslink_token:
-        return await create_mtslink_room(title, mtslink_token, starts_at)
-    return create_jitsi_room(title)
+        link, event_id, session_id = await create_mtslink_room(title, mtslink_token, starts_at, team_chat_id)
+        return link, event_id, session_id
+    return create_jitsi_room(title), None, None

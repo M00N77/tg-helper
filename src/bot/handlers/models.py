@@ -224,8 +224,9 @@ class Commitment(Base):
     direction: Mapped[str] = mapped_column(String(8))  # mine | theirs
     text: Mapped[str] = mapped_column(Text)
     deadline_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    status: Mapped[str] = mapped_column(String(16), default="open")  # open, done, cancelled
+    status: Mapped[str] = mapped_column(String(16), default="open")  # open, done, cancelled, trashed
     last_reminded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

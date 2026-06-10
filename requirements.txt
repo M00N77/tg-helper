@@ -28,3 +28,12 @@ rapidfuzz>=3.10
 
 # GigaChat (третий LLM-провайдер)
 gigachat>=0.1.28
+
+# Ngrok туннель для локальной разработки
+pyngrok>=7.0
+
+# HTTP сервер для webhook endpoint
+aiohttp>=3.9
+
+# Async файловые операции (скачивание записей)
+aiofiles>=24.1

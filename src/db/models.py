@@ -59,6 +59,9 @@ class UserSettings(Base):
     reminders_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     reminder_lead_hours: Mapped[int] = mapped_column(Integer, default=2)
     reminder_overdue_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    reminder_work_hours_start: Mapped[int] = mapped_column(Integer, default=9)
+    reminder_work_hours_end: Mapped[int] = mapped_column(Integer, default=21)
+    reminder_work_days: Mapped[str] = mapped_column(String(13), default="1,2,3,4,5")
     news_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     news_window_hours: Mapped[int] = mapped_column(Integer, default=24)
     news_digest_time: Mapped[str] = mapped_column(String(5), default="08:00")  # HH:MM в UTC
@@ -151,8 +154,9 @@ class Commitment(Base):
     direction: Mapped[str] = mapped_column(String(8))  # mine | theirs
     text: Mapped[str] = mapped_column(Text)
     deadline_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    status: Mapped[str] = mapped_column(String(16), default="open")  # open | done | cancelled
+    status: Mapped[str] = mapped_column(String(16), default="open")  # open | done | cancelled | trashed
     last_reminded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
@@ -231,6 +235,7 @@ class Team(Base):
     kanban_provider: Mapped[str | None] = mapped_column(Text, nullable=True, default="yougile")
     active_board_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     active_board_name: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    mtslink_token: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     meetings: Mapped[list["Meeting"]] = relationship(back_populates="team")
@@ -275,12 +280,18 @@ class Meeting(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
     meeting_url: Mapped[str] = mapped_column(Text)
+    mtslink_event_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    mtslink_record_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    mtslink_session_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     platform: Mapped[str] = mapped_column(String(32), default="unknown", server_default="unknown")
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     transcript: Mapped[str | None] = mapped_column(Text, nullable=True)
+    raw_llm_output: Mapped[str | None] = mapped_column(Text, nullable=True)
     audio_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    duration_sec: Mapped[int | None] = mapped_column(Integer, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="recording")
 
     team: Mapped[Team] = relationship(back_populates="meetings")
