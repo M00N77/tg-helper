@@ -33,6 +33,7 @@ class SettingsStates(StatesGroup):
     waiting_lead_hours = State()
     waiting_timezone = State()
     waiting_auto_reply_text = State()
+    waiting_display_name = State()
 
 
 class NewsTopicStates(StatesGroup):
@@ -57,6 +58,7 @@ class KanbanCardStates(StatesGroup):
     editing_title = State()
     editing_desc = State()
     moving_task = State()
+    setting_deadline = State()
 
 
 class MenuStates(StatesGroup):
@@ -77,3 +79,7 @@ class MeetingStates(StatesGroup):
 
 class TaskCreationStates(StatesGroup):
     waiting_for_board = State()
+
+
+class OnboardingStates(StatesGroup):
+    waiting_display_name = State()

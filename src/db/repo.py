@@ -595,6 +595,25 @@ async def get_team_members(
     return list(result.scalars().all())
 
 
+async def set_team_member_yougile_id(
+    session: AsyncSession,
+    team_id: int,
+    telegram_id: int,
+    yougile_user_id: str | None,
+) -> TeamMember | None:
+    result = await session.execute(
+        select(TeamMember).where(
+            TeamMember.team_id == team_id,
+            TeamMember.telegram_id == telegram_id,
+        )
+    )
+    member = result.scalar_one_or_none()
+    if member is None:
+        return None
+    member.yougile_user_id = yougile_user_id
+    return member
+
+
 async def remove_team_member(
     session: AsyncSession,
     team_id: int,
