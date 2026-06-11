@@ -115,7 +115,83 @@ def build_approval_kb(action_id: int) -> "InlineKeyboardMarkup":
         InlineKeyboardButton(text="📋 Выбрать задачи", callback_data=f"mtask:select:{action_id}"),
     )
     kb.row(
+        InlineKeyboardButton(text="✏️ Редактировать задачи", callback_data=f"mtask:editmenu:{action_id}"),
+    )
+    kb.row(
         InlineKeyboardButton(text="❌ Отмена", callback_data=f"mtask:cancel:{action_id}"),
+    )
+    return kb.as_markup()
+
+
+def format_task_line(task: dict) -> str:
+    """Однострочное представление задачи: 'название · исполнитель · дедлайн'."""
+    title = (task.get("title") or "?").strip()
+    assignee = task.get("assignee")
+    deadline = task.get("deadline")
+    tail = ""
+    if assignee:
+        tail += f" · {assignee}"
+    if deadline:
+        tail += f" · {deadline[:10]}"
+    return f"{title}{tail}"
+
+
+def parse_task_input(text: str) -> dict:
+    """Разбирает текст пользователя в задачу.
+
+    Поддерживаемые форматы (всё, кроме title, опционально):
+      "Название"
+      "Название | исполнитель"
+      "Название | исполнитель | 2025-01-31"
+    Разделитель — '|'. Дедлайн распознаётся как ISO-дата YYYY-MM-DD.
+    """
+    parts = [p.strip() for p in (text or "").split("|")]
+    title = parts[0].strip()
+    assignee = None
+    deadline = None
+
+    rest = parts[1:]
+    for chunk in rest:
+        if not chunk:
+            continue
+        candidate = chunk[:10]
+        if len(candidate) == 10 and candidate[4] == "-" and candidate[7] == "-" and candidate.replace("-", "").isdigit():
+            deadline = candidate
+        elif assignee is None:
+            assignee = chunk
+    return {"title": title, "assignee": assignee, "deadline": deadline}
+
+
+def build_edit_menu_text(payload: dict) -> str:
+    summary = payload.get("summary", "")
+    tasks = payload.get("tasks", [])
+    lines = [f"📋 <b>Саммари встречи</b>\n\n{summary}"]
+    lines.append(f"\n✏️ <b>Редактирование задач ({len(tasks)})</b>")
+    if tasks:
+        for i, t in enumerate(tasks[:10], 1):
+            lines.append(f"{i}. {format_task_line(t)}")
+    else:
+        lines.append("Список пуст. Добавь задачу кнопкой ниже.")
+    lines.append("\nВыбери задачу для изменения или удаления:")
+    return "\n".join(lines)[:4000]
+
+
+def build_edit_menu_kb(payload: dict, action_id: int) -> "InlineKeyboardMarkup":
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    from aiogram.types import InlineKeyboardButton
+
+    tasks = payload.get("tasks", [])
+    kb = InlineKeyboardBuilder()
+    for i, t in enumerate(tasks[:10]):
+        kb.row(
+            InlineKeyboardButton(text=f"✏️ {i+1}", callback_data=f"mtask:edit:{action_id}:{i}"),
+            InlineKeyboardButton(text=f"🗑 {i+1}", callback_data=f"mtask:del:{action_id}:{i}"),
+        )
+    kb.row(
+        InlineKeyboardButton(text="➕ Добавить задачу", callback_data=f"mtask:add:{action_id}"),
+    )
+    kb.row(
+        InlineKeyboardButton(text="🔙 Назад", callback_data=f"mtask:back:{action_id}"),
     )
     return kb.as_markup()
 
