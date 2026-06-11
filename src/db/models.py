@@ -140,6 +140,7 @@ class Message(Base):
     media_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     extracted_text: Mapped[str | None] = mapped_column(Text, nullable=True)  # для документов
     indexed_in_vector: Mapped[bool] = mapped_column(Boolean, default=False)
+    reply_to_msg_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
 class Commitment(Base):
@@ -237,10 +238,22 @@ class Team(Base):
     active_board_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     active_board_name: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     mtslink_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    standup_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    standup_time: Mapped[str] = mapped_column(String(5), default="09:30")
+    standup_msg_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     meetings: Mapped[list["Meeting"]] = relationship(back_populates="team")
     members: Mapped[list["TeamMember"]] = relationship(
+        back_populates="team", cascade="all, delete-orphan",
+    )
+    standups: Mapped[list["Standup"]] = relationship(
+        back_populates="team", cascade="all, delete-orphan",
+    )
+    blockers: Mapped[list["Blocker"]] = relationship(
+        back_populates="team", cascade="all, delete-orphan",
+    )
+    time_logs: Mapped[list["TimeLog"]] = relationship(
         back_populates="team", cascade="all, delete-orphan",
     )
 
@@ -253,6 +266,7 @@ class TeamMember(Base):
     team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
     telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
     role: Mapped[str] = mapped_column(String(32), default="member")
+    display_name: Mapped[str | None] = mapped_column(String(128), nullable=True, default=None)
     yougile_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True, default=None)
     joined_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
@@ -318,3 +332,82 @@ class MeetingTask(Base):
     kanban_card_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     meeting: Mapped[Meeting] = relationship(back_populates="extracted_tasks")
+
+
+class Standup(Base):
+    __tablename__ = "standups"
+    __table_args__ = (
+        UniqueConstraint("team_id", "user_id", "date", name="uq_standup_team_user_date"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(BigInteger)
+    display_name: Mapped[str] = mapped_column(String(128), default="")
+    date: Mapped[datetime] = mapped_column(DateTime, index=True)
+    done_today: Mapped[str] = mapped_column(Text, default="")
+    plan_today: Mapped[str] = mapped_column(Text, default="")
+    blockers: Mapped[str] = mapped_column(Text, default="")
+    mood: Mapped[str] = mapped_column(String(16), default="neutral")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    team: Mapped["Team"] = relationship(back_populates="standups")
+
+
+class Blocker(Base):
+    __tablename__ = "blockers"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    reported_by: Mapped[int] = mapped_column(BigInteger)
+    display_name: Mapped[str] = mapped_column(String(128), default="")
+    description: Mapped[str] = mapped_column(Text)
+    severity: Mapped[str] = mapped_column(String(16), default="medium")
+    status: Mapped[str] = mapped_column(String(16), default="open")
+    standup_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    telegram_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    team: Mapped["Team"] = relationship(back_populates="blockers")
+
+
+class TimeLog(Base):
+    __tablename__ = "time_logs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(BigInteger)
+    source: Mapped[str] = mapped_column(String(32))
+    source_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    minutes: Mapped[int] = mapped_column(Integer)
+    description: Mapped[str] = mapped_column(Text, default="")
+    date: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    team: Mapped["Team"] = relationship(back_populates="time_logs")
+
+
+class SociometryCache(Base):
+    __tablename__ = "sociometry_cache"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    period_start: Mapped[datetime] = mapped_column(DateTime)
+    period_end: Mapped[datetime] = mapped_column(DateTime)
+    snapshot: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class EmailMessage(Base):
+    __tablename__ = "email_messages"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    subject: Mapped[str] = mapped_column(String(512))
+    body: Mapped[str] = mapped_column(Text)
+    sender: Mapped[str] = mapped_column(String(256))
+    received_at: Mapped[datetime] = mapped_column(DateTime)
+    has_deadline: Mapped[bool] = mapped_column(Boolean, default=False)
+    deadline_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    commitment_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    processed: Mapped[bool] = mapped_column(Boolean, default=False)

@@ -23,10 +23,13 @@ COPY requirements.txt ./
 RUN pip install --upgrade pip \
     && pip install -r requirements.txt
 
+COPY alembic/ ./alembic/
+COPY alembic.ini ./
 COPY src/ ./src/
 COPY main.py ./
 
 # data — монтируется томом снаружи (БД, сессии, qdrant, media, кэш моделей)
 RUN mkdir -p /app/data
 
-CMD ["python", "main.py"]
+# alembic upgrade head выполняется при старте контейнера (см. entrypoint)
+CMD ["sh", "-c", "alembic upgrade head && python -m src.main"]
