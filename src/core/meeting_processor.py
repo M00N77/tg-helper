@@ -375,85 +375,78 @@ async def process_meeting_audio(
                 )
             return
 
+        # Resolve YouGile board/column info if integration is available.
+        # This is best-effort: even if it fails, we still offer task editing.
+        board_id = None
+        first_col_id = None
+        first_col_title = None
+        board_title = None
+        if team and team.kanban_token:
+            board_id = team.active_board_id or team.kanban_board_id
+            if board_id:
+                client = YouGileClient(team.kanban_token, board_id)
+                try:
+                    boards_data = await client.get_boards()
+                    for b in boards_data:
+                        if b["id"] == board_id:
+                            board_title = b.get("title", "")
+                            break
+                    columns = await client.get_columns()
+                    if columns:
+                        first_col_id = columns[0]["id"]
+                        first_col_title = columns[0].get("title", "")
+                except Exception as e:
+                    logger.warning("YouGile column/board fetch failed for meeting %s: %s", meeting_id, e)
+
         async with get_session() as session:
             await update_meeting_transcript(session, meeting_id, transcript, str(audio_path))
             if summary:
                 await update_meeting_summary(session, meeting_id, summary)
 
-            # If team has Kanban integration, create pending action for task approval
-            if team and team.kanban_token and tasks:
-                board_id = team.active_board_id or team.kanban_board_id
-                if board_id:
-                    # Get column info for payload (HTTP calls outside session)
-                    first_col_id = None
-                    first_col_title = None
-                    board_title = None
-                    client = YouGileClient(team.kanban_token, board_id)
-                    try:
-                        boards_data = await client.get_boards()
-                        for b in boards_data:
-                            if b["id"] == board_id:
-                                board_title = b.get("title", "")
-                                break
-                        columns = await client.get_columns()
-                        if columns:
-                            first_col_id = columns[0]["id"]
-                            first_col_title = columns[0].get("title", "")
-                    except Exception as e:
-                        logger.warning("YouGile column/board fetch failed for meeting %s: %s", meeting_id, e)
+            # Whenever tasks were extracted, create a pending action so the user
+            # always gets the approval/edit keyboard — regardless of whether the
+            # Kanban board/column could be resolved.
+            if tasks:
+                owner = await get_or_create_user(session, owner_telegram_id) if owner_telegram_id else None
+                payload = {
+                    "meeting_id": meeting_id,
+                    "summary": summary,
+                    "tasks": tasks,
+                    "team_id": team.id if team else None,
+                    "chat_id": chat_id,
+                    "board_id": board_id,
+                    "first_col_id": first_col_id,
+                    "board_title": board_title,
+                    "first_col_title": first_col_title,
+                    "selected_indices": [],
+                }
+                pending_action = await create_pending_action(
+                    session,
+                    user_id=owner.id if owner else 0,
+                    kind="meeting_tasks",
+                    payload=payload,
+                )
 
-                    if first_col_id:
-                        owner = await get_or_create_user(session, owner_telegram_id) if owner_telegram_id else None
-                        payload = {
-                            "meeting_id": meeting_id,
-                            "summary": summary,
-                            "tasks": tasks,
-                            "team_id": team.id,
-                            "chat_id": chat_id,
-                            "board_id": board_id,
-                            "first_col_id": first_col_id,
-                            "board_title": board_title,
-                            "first_col_title": first_col_title,
-                            "selected_indices": [],
-                        }
-                        pending_action = await create_pending_action(
-                            session,
-                            user_id=owner.id if owner else 0,
-                            kind="meeting_tasks",
-                            payload=payload,
-                        )
+                text = build_approval_text(payload)
+                # If YouGile isn't ready, hint the user; editing still works.
+                if not (team and team.kanban_token):
+                    text += "\n\n💡 Подключи YouGile (/kanban), чтобы создавать задачи на доске."
+                elif not first_col_id:
+                    text += "\n\n⚠️ Не удалось получить доску YouGile. Выбери доску в /kanban_board."
+                reply_markup = build_approval_kb(pending_action.id)
 
-                        text = build_approval_text(payload)
-                        reply_markup = build_approval_kb(pending_action.id)
+                if notice_message:
+                    await notice_message.edit_text(text[:4000], parse_mode="HTML", reply_markup=reply_markup)
+                else:
+                    await bot.send_message(chat_id, text[:4000], parse_mode="HTML", reply_markup=reply_markup)
 
-                        if notice_message:
-                            await notice_message.edit_text(text, parse_mode="HTML", reply_markup=reply_markup)
-                        else:
-                            await bot.send_message(chat_id, text, parse_mode="HTML", reply_markup=reply_markup)
+                await finish_meeting(session, meeting_id)
+                logger.info("Created pending action for meeting tasks: %s", pending_action.id)
+                return
 
-                        logger.info("Created pending action for meeting tasks: %s", pending_action.id)
-                        return
-
-        # If no Kanban or no tasks, proceed with normal flow
+        # No tasks extracted — just show the summary.
         lines = [f"📋 <b>Встреча — саммари</b>\n\n{summary}"]
-        if tasks:
-            lines.append(f"\n✅ <b>Задачи ({len(tasks)}):</b>")
-            for t in tasks[:10]:
-                title = t.get("title", "?")
-                assignee = t.get("assignee")
-                deadline = t.get("deadline")
-                tail = ""
-                if assignee:
-                    tail += f" · {assignee}"
-                if deadline:
-                    tail += f" · {deadline[:10]}"
-                lines.append(f"  • {title}{tail}")
-        else:
-            lines.append("\nЗадач не выявлено.")
-
-        # If we have tasks but no Kanban, show message about connecting YouGile
-        if tasks and (not team or not team.kanban_token):
-            lines.append("\n💡 Подключи YouGile (/kanban) чтобы задачи создавались автоматически.")
+        lines.append("\nЗадач не выявлено.")
 
         async with get_session() as session:
             await finish_meeting(session, meeting_id)
