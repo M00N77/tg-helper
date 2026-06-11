@@ -241,6 +241,8 @@ class Team(Base):
     standup_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     standup_time: Mapped[str] = mapped_column(String(5), default="09:30")
     standup_msg_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    activities_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    pulse_time: Mapped[str] = mapped_column(String(5), default="17:00")  # HH:MM в TZ команды (Europe/Moscow)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     meetings: Mapped[list["Meeting"]] = relationship(back_populates="team")
@@ -396,6 +398,54 @@ class SociometryCache(Base):
     period_end: Mapped[datetime] = mapped_column(DateTime)
     snapshot: Mapped[dict] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ActivitySession(Base):
+    """Конкретный запуск групповой активности (пульс-опрос, метафора, квиз) в чате команды."""
+
+    __tablename__ = "activity_sessions"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    activity_code: Mapped[str] = mapped_column(String(64), index=True)  # код механики из registry
+    kind: Mapped[str] = mapped_column(String(32), default="pulse")  # pulse | metaphor | quiz | icebreaker
+    is_anonymous: Mapped[bool] = mapped_column(Boolean, default=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    telegram_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    question: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(16), default="open")  # open | closed
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    responses: Mapped[list["ActivityResponse"]] = relationship(
+        back_populates="session", cascade="all, delete-orphan",
+    )
+
+
+class ActivityResponse(Base):
+    """Ответ участника на активность.
+
+    Анонимность: для is_anonymous-сессий user_id НЕ пишется (NULL), вместо него
+    хранится respondent_hash = HMAC(secret, telegram_id + session_id). Это даёт
+    дедупликацию «один человек — один голос» без хранения связи с личностью.
+    """
+
+    __tablename__ = "activity_responses"
+    __table_args__ = (
+        UniqueConstraint("session_id", "respondent_hash", name="uq_activity_resp_session_hash"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    session_id: Mapped[int] = mapped_column(
+        ForeignKey("activity_sessions.id", ondelete="CASCADE"), index=True
+    )
+    respondent_hash: Mapped[str] = mapped_column(String(64), index=True)  # HMAC-hex, всегда заполнен
+    user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)  # NULL для анонимных
+    answer_value: Mapped[int | None] = mapped_column(Integer, nullable=True)  # числовой ответ (шкала 1..5)
+    answer_text: Mapped[str | None] = mapped_column(Text, nullable=True)  # свободный текст
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    session: Mapped["ActivitySession"] = relationship(back_populates="responses")
 
 
 class EmailMessage(Base):
