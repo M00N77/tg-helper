@@ -18,7 +18,6 @@ from src.bot.states import KanbanStates, KanbanAuthStates, KanbanCardStates
 
 from src.bot.handlers.yougile import YouGileClient, _parse_deadline
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 from src.db.session import get_session
 from src.db.repo import (
     set_active_board, update_team_kanban, get_team_by_chat,
@@ -410,7 +409,7 @@ async def cmd_kanban_board(message: Message, state: FSMContext):
 
 
 @router.callback_query(F.data.startswith("sb:"))
-async def cb_set_board(callback: CallbackQuery, session: AsyncSession, state: FSMContext):
+async def cb_set_board(callback: CallbackQuery, state: FSMContext):
     if not await is_team_owner(callback):
         await callback.answer("⛔ Только владелец команды может менять доску", show_alert=True)
         return
@@ -423,14 +422,15 @@ async def cb_set_board(callback: CallbackQuery, session: AsyncSession, state: FS
         return
     board_id, board_name = boards[idx]
 
-    team = await get_team_by_chat(session, callback.message.chat.id)
-
-    await set_active_board(session, callback.message.chat.id, board_id, board_name)
+    async with get_session() as session:
+        team = await get_team_by_chat(session, callback.message.chat.id)
+        token = team.kanban_token if team else None
+        await set_active_board(session, callback.message.chat.id, board_id, board_name)
 
     pending_tasks = data.get("pending_tasks")
 
     if pending_tasks:
-        c = YouGileClient(team.kanban_token, board_id)
+        c = YouGileClient(token, board_id)
         cols = await c.get_columns()
         first_col_id = cols[0]["id"] if cols else None
         created = 0
