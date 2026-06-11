@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import signal
+import sys
 
 from src.bot.app import run_bot
 from src.core.auto_sync import auto_sync_loop
@@ -7,6 +9,8 @@ from src.core.digest import digest_scheduler_loop
 from src.core.evening_digest import evening_digest_loop
 from src.core.news import news_scheduler_loop
 from src.core.reminders import reminders_loop
+from src.core.standup_scheduler import standup_scheduler_loop, blocker_escalation_loop
+from src.core.vector_store import vector_store
 from src.db.session import init_db, get_session
 from src.userbot.manager import UserbotManager
 
@@ -34,6 +38,19 @@ async def main() -> None:
     )
     logger.info("Starting TelegramAssistant")
 
+    loop = asyncio.get_running_loop()
+    stop_event = asyncio.Event()
+
+    def _signal_handler() -> None:
+        logger.info("Received termination signal, shutting down...")
+        stop_event.set()
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, _signal_handler)
+        except (NotImplementedError, ValueError):
+            pass
+
     await init_db()
 
     userbot_manager = UserbotManager()
@@ -46,11 +63,17 @@ async def main() -> None:
         asyncio.create_task(news_scheduler_loop(), name="news-scheduler"),
         asyncio.create_task(auto_sync_loop(), name="auto-sync"),
         asyncio.create_task(_clean_trash_loop(), name="trash-cleaner"),
+        asyncio.create_task(standup_scheduler_loop(), name="standup-scheduler"),
+        asyncio.create_task(blocker_escalation_loop(), name="blocker-escalation"),
     ]
 
     try:
         await run_bot(userbot_manager)
+    except (RuntimeError, Exception) as exc:
+        logger.critical("Bot terminated: %s", exc)
+        raise
     finally:
+        stop_event.set()
         for t in bg_tasks:
             t.cancel()
         for t in bg_tasks:
@@ -58,6 +81,8 @@ async def main() -> None:
                 await t
             except (asyncio.CancelledError, Exception):
                 pass
+        await userbot_manager.close_all()
+        await vector_store.close()
 
 
 def run() -> None:
@@ -65,6 +90,9 @@ def run() -> None:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         logger.info("Shutdown requested")
+    except RuntimeError as exc:
+        logger.critical("Bot terminated after cleanup: %s", exc)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

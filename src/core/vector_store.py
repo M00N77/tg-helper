@@ -2,6 +2,7 @@
 с актуальным размером embedding'а — это позволяет менять провайдера без миграций."""
 import asyncio
 import logging
+import sys
 from dataclasses import dataclass
 
 from qdrant_client import QdrantClient
@@ -31,7 +32,21 @@ class VectorStore:
     def __init__(self) -> None:
         path = settings.data_dir / "qdrant"
         path.mkdir(parents=True, exist_ok=True)
-        self._client = QdrantClient(path=str(path))
+        try:
+            self._client = QdrantClient(path=str(path))
+        except (RuntimeError, PermissionError) as exc:
+            msg = (
+                f"Не удалось открыть Qdrant storage {path}.\n"
+                f"Причина: {exc}\n\n"
+                "Возможные причины:\n"
+                "1. Другой экземпляр бота уже запущен (два процесса).\n"
+                "2. Остался stale-файл блокировки data/qdrant/.lock "
+                "от аварийно завершённого процесса.\n\n"
+                "Решение: завершите дублирующийся процесс или удалите .lock вручную."
+            )
+            logger.critical(msg)
+            print(msg, file=sys.stderr)
+            sys.exit(1)
         self._lock = asyncio.Lock()
         self._dim: int | None = None
 
@@ -144,6 +159,15 @@ class VectorStore:
             )
             for p in raw
         ]
+
+
+    async def close(self) -> None:
+        def _do() -> None:
+            try:
+                self._client.close()
+            except Exception:
+                pass
+        await asyncio.to_thread(_do)
 
 
 vector_store = VectorStore()

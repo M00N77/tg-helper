@@ -17,6 +17,11 @@ from src.db.models import (
     NewsTopic,
     PendingAction,
     PendingInvite,
+    Blocker,
+    EmailMessage,
+    SociometryCache,
+    Standup,
+    TimeLog,
     Team,
     TeamMember,
     TelegramSession,
@@ -203,6 +208,7 @@ async def upsert_message(
     transcript: str | None = None,
     media_path: str | None = None,
     extracted_text: str | None = None,
+    reply_to_msg_id: int | None = None,
 ) -> None:
     stmt = pg_insert(Message).values(
         user_id=user_id,
@@ -217,6 +223,7 @@ async def upsert_message(
         transcript=transcript,
         media_path=media_path,
         extracted_text=extracted_text,
+        reply_to_msg_id=reply_to_msg_id,
     )
     stmt = stmt.on_conflict_do_update(
         index_elements=["user_id", "peer_id", "message_id"],
@@ -892,3 +899,136 @@ async def set_active_board(
     team.active_board_id = board_id
     team.active_board_name = board_name
     await session.commit()
+
+
+# ── Standup ──────────────────────────────────────────────────────────────
+
+async def create_or_update_standup(
+    session: AsyncSession,
+    *,
+    team_id: int,
+    user_id: int,
+    display_name: str,
+    date: datetime,
+    done_today: str,
+    plan_today: str,
+    blockers: str,
+    mood: str = "neutral",
+) -> Standup:
+    result = await session.execute(
+        select(Standup).where(
+            Standup.team_id == team_id,
+            Standup.user_id == user_id,
+            Standup.date == date,
+        )
+    )
+    s = result.scalar_one_or_none()
+    if s is None:
+        s = Standup(
+            team_id=team_id, user_id=user_id, display_name=display_name,
+            date=date, done_today=done_today, plan_today=plan_today,
+            blockers=blockers, mood=mood,
+        )
+        session.add(s)
+    else:
+        s.done_today = done_today
+        s.plan_today = plan_today
+        s.blockers = blockers
+        s.mood = mood
+    await session.flush()
+    return s
+
+
+async def get_standups_for_date(
+    session: AsyncSession, team_id: int, date: datetime
+) -> list[Standup]:
+    result = await session.execute(
+        select(Standup).where(
+            Standup.team_id == team_id,
+            Standup.date == date,
+        )
+    )
+    return list(result.scalars().all())
+
+
+# ── Blocker ───────────────────────────────────────────────────────────────
+
+async def create_blocker(
+    session: AsyncSession,
+    *,
+    team_id: int,
+    reported_by: int,
+    display_name: str,
+    description: str,
+    severity: str = "medium",
+    standup_id: int | None = None,
+    telegram_message_id: int | None = None,
+) -> Blocker:
+    b = Blocker(
+        team_id=team_id,
+        reported_by=reported_by,
+        display_name=display_name,
+        description=description,
+        severity=severity,
+        standup_id=standup_id,
+        telegram_message_id=telegram_message_id,
+    )
+    session.add(b)
+    await session.flush()
+    return b
+
+
+async def get_open_blockers(session: AsyncSession, team_id: int) -> list[Blocker]:
+    result = await session.execute(
+        select(Blocker).where(
+            Blocker.team_id == team_id,
+            Blocker.status == "open",
+        ).order_by(Blocker.severity.desc(), Blocker.created_at)
+    )
+    return list(result.scalars().all())
+
+
+async def resolve_blocker(session: AsyncSession, blocker_id: int) -> bool:
+    result = await session.execute(select(Blocker).where(Blocker.id == blocker_id))
+    b = result.scalar_one_or_none()
+    if b:
+        b.status = "resolved"
+        b.resolved_at = datetime.utcnow()
+        return True
+    return False
+
+
+async def dismiss_blocker(session: AsyncSession, blocker_id: int) -> bool:
+    result = await session.execute(select(Blocker).where(Blocker.id == blocker_id))
+    b = result.scalar_one_or_none()
+    if b:
+        b.status = "dismissed"
+        return True
+    return False
+
+
+# ── TimeLog ───────────────────────────────────────────────────────────────
+
+async def create_time_log(
+    session: AsyncSession,
+    *,
+    team_id: int,
+    user_id: int,
+    source: str,
+    minutes: int,
+    description: str = "",
+    source_id: str | None = None,
+    date: datetime | None = None,
+) -> TimeLog:
+    tl = TimeLog(
+        team_id=team_id,
+        user_id=user_id,
+        source=source,
+        source_id=source_id,
+        minutes=minutes,
+        description=description,
+        date=date or datetime.utcnow(),
+    )
+    session.add(tl)
+    await session.flush()
+    return tl

@@ -106,3 +106,11 @@ class UserbotManager:
 
     def clear_pending(self, telegram_id: int) -> PendingLogin | None:
         return self._pending.pop(telegram_id, None)
+
+    async def close_all(self) -> None:
+        for tid, client in list(self._clients.items()):
+            try:
+                await client.disconnect()
+            except Exception:
+                logger.exception("Failed to disconnect Telethon client for user %s", tid)
+        self._clients.clear()

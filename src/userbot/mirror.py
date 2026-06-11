@@ -97,6 +97,10 @@ def attach_mirror(client: TelegramClient, owner_telegram_id: int) -> None:
                             username=getattr(chat, "username", None),
                         )
 
+                reply_to_msg_id = None
+                if msg.reply_to and hasattr(msg.reply_to, "reply_to_msg_id"):
+                    reply_to_msg_id = msg.reply_to.reply_to_msg_id
+
                 await upsert_message(
                     session,
                     user_id=owner.id,
@@ -111,6 +115,7 @@ def attach_mirror(client: TelegramClient, owner_telegram_id: int) -> None:
                     transcript=None,
                     media_path=None,
                     extracted_text=None,
+                    reply_to_msg_id=reply_to_msg_id,
                 )
         except Exception:
             logger.exception("mirror handler failed")
