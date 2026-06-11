@@ -11,6 +11,7 @@ from src.core.news import news_scheduler_loop
 from src.core.reminders import reminders_loop
 from src.core.standup_scheduler import standup_scheduler_loop, blocker_escalation_loop
 from src.core.vector_store import vector_store
+from src.group_bot.activities.scheduler import activities_scheduler_loop
 from src.db.session import init_db, get_session
 from src.userbot.manager import UserbotManager
 
@@ -65,6 +66,7 @@ async def main() -> None:
         asyncio.create_task(_clean_trash_loop(), name="trash-cleaner"),
         asyncio.create_task(standup_scheduler_loop(), name="standup-scheduler"),
         asyncio.create_task(blocker_escalation_loop(), name="blocker-escalation"),
+        asyncio.create_task(activities_scheduler_loop(), name="activities-scheduler"),
     ]
 
     try:
