@@ -192,6 +192,50 @@ class YouGileClient:
                 raise RuntimeError(f"YouGile PUT /tasks/{card_id} вернул {response.status_code}: {body}")
             return response.json()
 
+    async def find_task_by_title(self, title_hint: str, limit_per_col: int = 50) -> List[Dict]:
+        """Найти задачи на доске по части названия (нечётко, по всем колонкам).
+        Возвращает список совпавших карточек, отсортированный по релевантности."""
+        self._require_board()
+        title_hint = (title_hint or "").strip()
+        if not title_hint:
+            return []
+
+        columns = await self.get_columns()
+        all_cards: List[Dict] = []
+        for col in columns:
+            try:
+                cards = await self.get_cards_in_column(col["id"], limit=limit_per_col)
+            except Exception:
+                continue
+            all_cards.extend(cards)
+
+        if not all_cards:
+            return []
+
+        hint_lower = title_hint.lower()
+
+        # 1. Прямые подстрочные совпадения — самые точные.
+        substring = [c for c in all_cards if hint_lower in (c.get("title", "").lower())]
+        if substring:
+            return substring
+
+        # 2. Нечёткий поиск через rapidfuzz.
+        scored = []
+        for c in all_cards:
+            title = c.get("title", "")
+            if not title:
+                continue
+            score = fuzz.WRatio(title_hint, title)
+            if score >= 60:
+                scored.append((score, c))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [c for _, c in scored]
+
+    async def close(self) -> None:
+        """Совместимость: клиент использует короткоживущие httpx-сессии per-request,
+        отдельного persistent-соединения закрывать не требуется."""
+        return None
+
     async def get_task(self, task_id: str) -> Dict:
         """Получить данные одной задачи"""
         self._require_board()

@@ -32,6 +32,11 @@ from src.bot.handlers import (
     blockers as blockers_handlers,
     activities as activities_handlers,
 )
+from src.group_bot.handlers import (
+    free_text as group_free_text,
+    link as group_link,
+    setup_kanban as group_setup_kanban,
+)
 from src.config import settings
 from src.core.notifier import notifier
 from src.bot.middlewares.invite_check import InviteCheckMiddleware
@@ -88,6 +93,11 @@ async def run_bot(userbot_manager: UserbotManager) -> None:
     dp.include_router(standup_handlers.router)
     dp.include_router(blockers_handlers.router)
     dp.include_router(activities_handlers.router)
+    # Групповой HR-функционал (создание задач, права участников, согласование).
+    # GroupOnly-фильтр гарантирует, что эти роутеры срабатывают только в группах.
+    dp.include_router(group_setup_kanban.router)
+    dp.include_router(group_link.make_router())
+    dp.include_router(group_free_text.router)
     # ВАЖНО: free_text — самым последним, чтобы команды и FSM перехватили текст раньше
     dp.include_router(free_text.router)
 
