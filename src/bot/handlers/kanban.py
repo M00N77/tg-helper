@@ -252,7 +252,7 @@ async def cb_kanban_board(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.message(Command("kanban_login"))
+@router.message(Command("kanban_login"), F.chat.type == "private")
 async def cmd_kanban_login(message: Message, state: FSMContext):
     if not await is_team_owner(message):
         await message.answer("⛔ Только владелец команды может менять настройки доски")
@@ -330,7 +330,7 @@ async def process_password(message: Message, state: FSMContext):
         )
 
 
-@router.message(Command("kanban_board"))
+@router.message(Command("kanban_board"), F.chat.type == "private")
 async def cmd_kanban_board(message: Message, state: FSMContext):
     if not await is_team_owner(message):
         await message.answer("⛔ Только владелец команды может менять доску")
