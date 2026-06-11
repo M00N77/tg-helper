@@ -222,44 +222,101 @@ async def cmd_kanban_board(message: Message):
     chat_id = message.chat.id
     user_id = message.from_user.id
 
-    if not await is_admin(chat_id, user_id):
-        await message.answer("⛔ Только руководитель команды может менять доску.")
-        return
-
-    parts = (message.text or "").split(maxsplit=1)
-    if len(parts) != 2:
-        await message.answer("❌ Укажите ID доски: <code>/kanban_board ID_ДОСКИ</code>")
-        return
-
-    board_id = parts[1].strip()
-    if not board_id:
-        await message.answer("❌ ID доски не может быть пустым.")
-        return
-
     async with get_session() as session:
         team = await get_team_by_chat(session, chat_id)
 
-    if team is None or not team.kanban_token:
-        await message.answer("❌ Сначала выполните /setup_kanban для получения токена.")
+    if team is None:
+        await message.answer("❌ Команда не найдена. Сначала выполните /i_am_director.")
         return
 
-    client = YouGileClient(team.kanban_token, board_id)
+    if not team.kanban_token:
+        await message.answer(
+            "❌ Канбан не подключён.\n\n"
+            "Настройте в личке с ботом:\n"
+            "• /kanban_login — авторизация через YouGile\n"
+            "• /kanban_board — выбор доски"
+        )
+        return
+
+    # Если передан ID доски — меняем (только админ)
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) > 1 and parts[1].strip():
+        if not await is_admin(chat_id, user_id):
+            await message.answer("⛔ Только руководитель команды может менять доску.")
+            return
+
+        board_id = parts[1].strip()
+        client = YouGileClient(team.kanban_token, board_id)
+        try:
+            columns = await client.get_columns()
+        except Exception as e:
+            await message.answer(f"❌ Ошибка при проверке доски: {e}")
+            return
+        finally:
+            await client.close()
+
+        if not columns:
+            await message.answer("❌ Доска не содержит колонок. Проверьте ID.")
+            return
+
+        async with get_session() as session:
+            await update_team_kanban(session, chat_id, team.kanban_token, board_id, "yougile")
+        await message.answer("✅ Доска подключена! Теперь участники могут использовать бота.")
+        return
+
+    # Без аргумента — показываем текущую доску
+    if not team.kanban_board_id:
+        await message.answer(
+            "📊 Канбан подключён, но доска не выбрана.\n\n"
+            "Выберите доску в личке с ботом командой /kanban_board"
+        )
+        return
+
+    # Показываем информацию о текущей доске
+    client = YouGileClient(team.kanban_token, team.kanban_board_id)
     try:
         columns = await client.get_columns()
+        text = f"📊 <b>Канбан-доска команды</b>\n\n"
+        text += f"Доска: {team.active_board_name or team.kanban_board_id}\n\n"
+        for col in columns:
+            text += f"📋 {col.get('title', '?')}\n"
     except Exception as e:
-        await message.answer(f"❌ Ошибка при проверке доски: {e}")
+        await message.answer(f"❌ Ошибка при получении доски: {e}")
         return
     finally:
         await client.close()
 
-    if not columns:
-        await message.answer("❌ Доска не содержит колонок. Проверьте ID.")
-        return
+    await message.answer(text, parse_mode="HTML")
+
+
+@router.message(Command("kanban_status"), GroupOnly())
+async def cmd_kanban_status(message: Message):
+    """Показывает статус подключения канбана в групповом чате."""
+    chat_id = message.chat.id
 
     async with get_session() as session:
-        await update_team_kanban(session, chat_id, team.kanban_token, board_id, "yougile")
+        team = await get_team_by_chat(session, chat_id)
 
-    await message.answer("✅ Доска подключена! Теперь участники могут использовать бота.")
+    if team is None:
+        await message.answer("❌ Команда не найдена. Сначала выполните /i_am_director.")
+        return
+
+    lines = ["📊 <b>Статус канбана</b>"]
+
+    if not team.kanban_token:
+        lines.append("\n❌ Канбан не подключён")
+        lines.append("\nНастройте в личке с ботом:")
+        lines.append("• /kanban_login — авторизация через YouGile")
+        lines.append("• /kanban_board — выбор доски")
+    else:
+        lines.append("\n✅ Токен: подключён")
+        if team.kanban_board_id:
+            lines.append(f"✅ Доска: {team.active_board_name or team.kanban_board_id}")
+        else:
+            lines.append("⚠️ Доска: не выбрана")
+            lines.append("\nВыберите доску в личке с ботом командой /kanban_board")
+
+    await message.answer("\n".join(lines), parse_mode="HTML")
 
 
 @router.message(Command("kanban_login"), GroupOnly())
