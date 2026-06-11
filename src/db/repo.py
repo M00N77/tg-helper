@@ -604,6 +604,92 @@ async def get_team_members(
     return list(result.scalars().all())
 
 
+# list_team_members — алиас под конвенцию группового роутера
+async def list_team_members(
+    session: AsyncSession,
+    team_id: int,
+) -> list[TeamMember]:
+    return await get_team_members(session, team_id)
+
+
+async def get_team_member(
+    session: AsyncSession,
+    team_id: int,
+    telegram_id: int,
+) -> TeamMember | None:
+    result = await session.execute(
+        select(TeamMember).where(
+            TeamMember.team_id == team_id,
+            TeamMember.telegram_id == telegram_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def ensure_team_member(
+    session: AsyncSession,
+    team_id: int,
+    telegram_id: int,
+    display_name: str | None = None,
+) -> TeamMember:
+    """Возвращает участника команды, создавая запись при первом появлении в чате.
+    display_name обновляется, если стало известно более точное имя."""
+    member = await get_team_member(session, team_id, telegram_id)
+    if member is None:
+        # Директор команды получает роль admin автоматически.
+        team = await session.get(Team, team_id)
+        role = "admin" if team is not None and team.owner_telegram_id == telegram_id else "member"
+        member = TeamMember(
+            team_id=team_id,
+            telegram_id=telegram_id,
+            role=role,
+            display_name=display_name,
+        )
+        session.add(member)
+        await session.flush()
+    elif display_name and member.display_name != display_name:
+        member.display_name = display_name
+        await session.flush()
+    return member
+
+
+async def find_team_member_by_name(
+    session: AsyncSession,
+    team_id: int,
+    name: str,
+) -> TeamMember | None:
+    """Нечёткий поиск участника команды по display_name. Возвращает лучшее
+    совпадение или None, если запрос пуст / совпадений нет."""
+    name = (name or "").strip()
+    if not name:
+        return None
+    members = await get_team_members(session, team_id)
+    if not members:
+        return None
+
+    name_lower = name.lstrip("@").lower()
+
+    # 1. Точное / подстрочное совпадение по имени.
+    for m in members:
+        if m.display_name and name_lower in m.display_name.lower():
+            return m
+
+    # 2. Нечёткий поиск (rapidfuzz), если доступен.
+    try:
+        from rapidfuzz import fuzz, process
+    except Exception:
+        return None
+
+    choices = {m.id: (m.display_name or "") for m in members if m.display_name}
+    if not choices:
+        return None
+    raw = process.extractOne(name, choices, scorer=fuzz.WRatio, score_cutoff=60)
+    if not raw:
+        return None
+    member_id = raw[2]
+    return next((m for m in members if m.id == member_id), None)
+
+
 async def set_team_member_yougile_id(
     session: AsyncSession,
     team_id: int,

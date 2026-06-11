@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timezone
 
 from aiogram import F, Router
+from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.filters import Command
 from aiogram.types import Message
 
@@ -115,14 +116,16 @@ async def cmd_standup_skip(message: Message) -> None:
 async def handle_standup_reply(message: Message) -> None:
     """Перехватывает ответы на стендап-сообщение бота."""
     if not message.from_user or not message.text:
-        return
+        raise SkipHandler
 
     async with get_session() as session:
         team = await get_team_by_chat(session, message.chat.id)
         if not team or not team.standup_msg_id:
-            return
+            # Не стендап-чат — пропускаем дальше (например, к согласованию задач).
+            raise SkipHandler
         if message.reply_to_message.message_id != team.standup_msg_id:
-            return
+            # Ответ не на стендап-сообщение — отдаём другим роутерам.
+            raise SkipHandler
 
         owner = await get_or_create_user(session, message.from_user.id)
         provider = await build_provider(session, owner)
