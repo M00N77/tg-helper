@@ -14,10 +14,38 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.types import TypeDecorator
 
 
 class Base(DeclarativeBase):
     pass
+
+
+class EncryptedString(TypeDecorator):
+    """Прозрачное шифрование строкового столбца (Fernet) на уровне ORM.
+
+    Значение шифруется при записи в БД и расшифровывается при чтении — код,
+    обращающийся к атрибуту модели, работает с открытым текстом и ничего не знает
+    о шифровании. Для обратной совместимости со старыми записями, сохранёнными в
+    открытом виде, при чтении используется try_decrypt: если значение не валидный
+    Fernet-токен, оно возвращается как есть (легаси-плейнтекст).
+    """
+
+    impl = Text
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        # Импорт здесь, чтобы избежать цикла models → crypto → config на этапе сборки.
+        from src.crypto import encrypt
+        return encrypt(value)
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return None
+        from src.crypto import try_decrypt
+        return try_decrypt(value)
 
 
 class User(Base):
@@ -232,12 +260,12 @@ class Team(Base):
     name: Mapped[str] = mapped_column(String(128), default="")
     chat_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
     owner_telegram_id: Mapped[int] = mapped_column(BigInteger, default=0)
-    kanban_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    kanban_token: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
     kanban_board_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     kanban_provider: Mapped[str | None] = mapped_column(Text, nullable=True, default="yougile")
     active_board_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     active_board_name: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
-    mtslink_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mtslink_token: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
     standup_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     standup_time: Mapped[str] = mapped_column(String(5), default="09:30")
     standup_msg_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)

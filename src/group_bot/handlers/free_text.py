@@ -409,6 +409,44 @@ async def _handle_close_task(message: Message, team, member, intent: dict) -> No
     await message.reply(f"✅ Задача «{task.get('title', '?')}» закрыта.")
 
 
+async def _handle_comment_task(message: Message, team, member, intent: dict) -> None:
+    title_hint = (intent.get("task_title_hint") or "").strip()
+    comment = (intent.get("comment") or "").strip()
+
+    if not title_hint:
+        await message.reply("❓ Не понял, к какой задаче комментарий. Уточни название.")
+        return
+    if not comment:
+        await message.reply("❓ Пустой комментарий. Напиши текст заметки.")
+        return
+
+    if not team.kanban_token or not team.kanban_board_id:
+        await message.reply("📊 Канбан команды не настроен.")
+        return
+
+    client = YouGileClient(team.kanban_token, team.kanban_board_id)
+    task = await _find_task_by_title(client, title_hint)
+    if not task:
+        await message.reply(f"❓ Не нашёл задачу «{title_hint}» на доске.")
+        return
+
+    # Комментировать может автор задачи или руководитель.
+    if member.role != "admin" and not await _is_task_owner(member, task):
+        await message.reply("⛔ Только автор задачи или руководитель может её комментировать.")
+        return
+
+    author = member.display_name or str(member.telegram_id)
+    body = f"💬 {author}: {comment}"
+    try:
+        await client.add_comment(task["id"], body)
+    except Exception as e:
+        logger.exception("comment_task failed")
+        await message.reply(f"❌ Ошибка при добавлении комментария: {e}")
+        return
+
+    await message.reply(f"✅ Комментарий добавлен к задаче «{task.get('title', '?')}».")
+
+
 @router.message(F.text & ~F.text.startswith("/"))
 async def group_free_text(message: Message) -> None:
     chat_id = message.chat.id
@@ -467,4 +505,8 @@ async def group_free_text(message: Message) -> None:
 
     if kind == "close_task":
         await _handle_close_task(message, team, member, intent)
+        return
+
+    if kind == "comment_task":
+        await _handle_comment_task(message, team, member, intent)
         return

@@ -231,6 +231,28 @@ class YouGileClient:
         scored.sort(key=lambda x: x[0], reverse=True)
         return [c for _, c in scored]
 
+    async def add_comment(self, card_id: str, text: str) -> Dict:
+        """Добавить комментарий к задаче (chat-message в YouGile)."""
+        self._require_board()
+        if not text:
+            raise ValueError("comment text is empty")
+        payload = {"text": text}
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{self.base_url}/chats/{card_id}/messages",
+                headers=self.headers,
+                json=payload,
+            )
+            if response.status_code >= 400:
+                body = response.text
+                logging.warning(
+                    f"[YouGile][add_comment] status={response.status_code} body={body}"
+                )
+                raise RuntimeError(
+                    f"YouGile POST /chats/{card_id}/messages вернул {response.status_code}: {body}"
+                )
+            return response.json()
+
     async def close(self) -> None:
         """Совместимость: клиент использует короткоживущие httpx-сессии per-request,
         отдельного persistent-соединения закрывать не требуется."""
