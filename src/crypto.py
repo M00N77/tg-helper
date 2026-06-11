@@ -31,3 +31,16 @@ def decrypt(ciphertext: str) -> str:
         return _fernet.decrypt(ciphertext.encode()).decode()
     except InvalidToken as exc:
         raise ValueError("Не удалось расшифровать: неверный ключ или повреждённые данные") from exc
+
+
+def try_decrypt(value: str | None) -> str | None:
+    """Расшифровывает значение, но если оно не является валидным Fernet-токеном
+    (например, легаси-данные, сохранённые в открытом виде до внедрения шифрования),
+    возвращает его как есть. Используется для прозрачной миграции на шифрование.
+    """
+    if value is None:
+        return None
+    try:
+        return _fernet.decrypt(value.encode()).decode()
+    except (InvalidToken, ValueError):
+        return value

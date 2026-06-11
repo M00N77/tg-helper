@@ -16,6 +16,8 @@ from src.bot.handlers import (
     dashboard,
     weekly,
     burnout,
+    team_mood,
+    tasks_rating,
     login,
     meeting,
     menu,
@@ -88,6 +90,8 @@ async def run_bot(userbot_manager: UserbotManager) -> None:
     dp.include_router(dashboard.router)
     dp.include_router(weekly.router)
     dp.include_router(burnout.router)
+    dp.include_router(team_mood.router)
+    dp.include_router(tasks_rating.router)
     dp.include_router(meeting.router)
     dp.include_router(team_handlers.router)
     dp.include_router(standup_handlers.router)

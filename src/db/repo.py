@@ -1251,3 +1251,94 @@ async def mark_activity_summary_posted(session: AsyncSession, session_id: int) -
         if s.status == "open":
             s.status = "closed"
             s.closed_at = datetime.utcnow()
+
+
+@dataclass
+class PulseDayStat:
+    day: datetime           # начало дня (UTC)
+    count: int              # сколько голосов в этот день
+    avg: float              # средний балл за день
+
+
+@dataclass
+class PulseAggregate:
+    total_responses: int
+    sessions: int
+    avg: float                       # средний балл за весь период
+    distribution: dict[int, int]     # {1: n1, ... 5: n5}
+    by_day: list[PulseDayStat]       # хронологически по дням
+    trend: str                       # "up" | "down" | "flat" | "n/a"
+
+
+async def aggregate_pulse_responses(
+    session: AsyncSession,
+    team_id: int,
+    *,
+    days: int = 7,
+) -> PulseAggregate:
+    """Агрегирует анонимные пульс-голоса команды за последние N дней.
+
+    Анонимность сохраняется: считаем только агрегаты (средний балл, распределение,
+    динамика по дням), без привязки к respondent_hash/user_id в выдаче.
+    """
+    from datetime import timedelta
+
+    since = datetime.utcnow() - timedelta(days=days)
+
+    result = await session.execute(
+        select(ActivityResponse.answer_value, ActivitySession.started_at)
+        .join(ActivitySession, ActivitySession.id == ActivityResponse.session_id)
+        .where(
+            ActivitySession.team_id == team_id,
+            ActivitySession.kind == "pulse",
+            ActivitySession.started_at >= since,
+            ActivityResponse.answer_value.isnot(None),
+        )
+    )
+    rows = result.all()
+
+    values: list[int] = [int(v) for v, _ in rows]
+    distribution = {i: values.count(i) for i in range(1, 6)}
+    total = len(values)
+    avg = (sum(values) / total) if total else 0.0
+
+    # Сколько уникальных сессий участвовало (по started_at-дню достаточно для тренда).
+    sess_result = await session.execute(
+        select(ActivitySession.id)
+        .where(
+            ActivitySession.team_id == team_id,
+            ActivitySession.kind == "pulse",
+            ActivitySession.started_at >= since,
+        )
+    )
+    sessions = len(list(sess_result.scalars().all()))
+
+    # Группировка по дню.
+    day_buckets: dict[datetime, list[int]] = {}
+    for v, started in rows:
+        day = started.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_buckets.setdefault(day, []).append(int(v))
+
+    by_day = [
+        PulseDayStat(day=day, count=len(vals), avg=sum(vals) / len(vals))
+        for day, vals in sorted(day_buckets.items())
+    ]
+
+    # Тренд: сравниваем средние первой и второй половины периода.
+    if len(by_day) >= 2:
+        mid = len(by_day) // 2
+        first_avg = sum(d.avg for d in by_day[:mid]) / max(mid, 1)
+        second_avg = sum(d.avg for d in by_day[mid:]) / max(len(by_day) - mid, 1)
+        delta = second_avg - first_avg
+        trend = "up" if delta >= 0.3 else "down" if delta <= -0.3 else "flat"
+    else:
+        trend = "n/a"
+
+    return PulseAggregate(
+        total_responses=total,
+        sessions=sessions,
+        avg=avg,
+        distribution=distribution,
+        by_day=by_day,
+        trend=trend,
+    )
