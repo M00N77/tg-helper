@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.crypto import decrypt, encrypt
 from src.db.models import (
+    ActivityResponse,
+    ActivitySession,
     ApiKey,
     AutoReplyLog,
     Commitment,
@@ -1032,3 +1034,100 @@ async def create_time_log(
     session.add(tl)
     await session.flush()
     return tl
+
+
+# ── Group activities (пульс-опросы, метафоры, квизы) ──────────────────────
+
+async def create_activity_session(
+    session: AsyncSession,
+    *,
+    team_id: int,
+    activity_code: str,
+    kind: str,
+    is_anonymous: bool,
+    chat_id: int,
+    question: str,
+) -> ActivitySession:
+    s = ActivitySession(
+        team_id=team_id,
+        activity_code=activity_code,
+        kind=kind,
+        is_anonymous=is_anonymous,
+        chat_id=chat_id,
+        question=question,
+    )
+    session.add(s)
+    await session.flush()
+    return s
+
+
+async def set_activity_message_id(
+    session: AsyncSession, session_id: int, message_id: int
+) -> None:
+    s = await session.get(ActivitySession, session_id)
+    if s is not None:
+        s.telegram_message_id = message_id
+
+
+async def get_activity_session(
+    session: AsyncSession, session_id: int
+) -> ActivitySession | None:
+    return await session.get(ActivitySession, session_id)
+
+
+async def list_open_activity_sessions(
+    session: AsyncSession, team_id: int
+) -> list[ActivitySession]:
+    result = await session.execute(
+        select(ActivitySession).where(
+            ActivitySession.team_id == team_id,
+            ActivitySession.status == "open",
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def upsert_activity_response(
+    session: AsyncSession,
+    *,
+    session_id: int,
+    respondent_hash: str,
+    user_id: int | None,
+    answer_value: int | None = None,
+    answer_text: str | None = None,
+) -> bool:
+    """Записывает/обновляет ответ. Возвращает True, если это был первый голос
+    данного респондента в сессии (для аккуратной обратной связи). Дедупликация —
+    по (session_id, respondent_hash)."""
+    stmt = pg_insert(ActivityResponse).values(
+        session_id=session_id,
+        respondent_hash=respondent_hash,
+        user_id=user_id,
+        answer_value=answer_value,
+        answer_text=answer_text,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["session_id", "respondent_hash"],
+        set_={
+            "answer_value": stmt.excluded.answer_value,
+            "answer_text": stmt.excluded.answer_text,
+        },
+    ).returning(ActivityResponse.created_at)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none() is not None
+
+
+async def get_activity_responses(
+    session: AsyncSession, session_id: int
+) -> list[ActivityResponse]:
+    result = await session.execute(
+        select(ActivityResponse).where(ActivityResponse.session_id == session_id)
+    )
+    return list(result.scalars().all())
+
+
+async def close_activity_session(session: AsyncSession, session_id: int) -> None:
+    s = await session.get(ActivitySession, session_id)
+    if s is not None and s.status == "open":
+        s.status = "closed"
+        s.closed_at = datetime.utcnow()

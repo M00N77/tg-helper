@@ -30,6 +30,7 @@ from src.bot.handlers import (
     todos,
     standup as standup_handlers,
     blockers as blockers_handlers,
+    activities as activities_handlers,
 )
 from src.config import settings
 from src.core.notifier import notifier
@@ -86,6 +87,7 @@ async def run_bot(userbot_manager: UserbotManager) -> None:
     dp.include_router(team_handlers.router)
     dp.include_router(standup_handlers.router)
     dp.include_router(blockers_handlers.router)
+    dp.include_router(activities_handlers.router)
     # ВАЖНО: free_text — самым последним, чтобы команды и FSM перехватили текст раньше
     dp.include_router(free_text.router)
 
