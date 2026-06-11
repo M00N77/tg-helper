@@ -75,6 +75,8 @@ class TeamStates(StatesGroup):
 
 class MeetingStates(StatesGroup):
     waiting_url = State()
+    waiting_task_edit = State()
+    waiting_task_add = State()
 
 
 class TaskCreationStates(StatesGroup):

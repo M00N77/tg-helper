@@ -41,7 +41,12 @@ from src.core.meeting_processor import (
     build_approval_kb,
     build_selection_text,
     build_selection_kb,
+    build_edit_menu_text,
+    build_edit_menu_kb,
+    parse_task_input,
+    format_task_line,
 )
+from src.bot.states import MeetingStates
 from src.config import settings as app_settings
 from src.db.models import Team
 
@@ -365,3 +370,165 @@ async def cb_mtask_create_selected(callback: CallbackQuery) -> None:
     result = "✅ Задачи созданы!" if failed == 0 else f"✅ {created} создано, {failed} с ошибками"
     await callback.message.edit_text(f"{result}\n\n📋 Доска: {board_name or 'по умолчанию'}")
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mtask:editmenu:"))
+async def cb_mtask_editmenu(callback: CallbackQuery, state: FSMContext) -> None:
+    action_id = int(callback.data.split(":")[2])
+    await state.clear()
+    async with get_session() as session:
+        action = await get_pending_action(session, action_id)
+        if action is None or action.kind != "meeting_tasks":
+            await callback.answer("Действие устарело", show_alert=True)
+            return
+        payload = action.payload
+    await callback.message.edit_text(
+        build_edit_menu_text(payload),
+        parse_mode="HTML",
+        reply_markup=build_edit_menu_kb(payload, action_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mtask:del:"))
+async def cb_mtask_delete(callback: CallbackQuery) -> None:
+    parts = callback.data.split(":")
+    action_id = int(parts[2])
+    task_idx = int(parts[3])
+    async with get_session() as session:
+        action = await get_pending_action(session, action_id)
+        if action is None or action.kind != "meeting_tasks":
+            await callback.answer("Действие устарело", show_alert=True)
+            return
+        payload = action.payload
+        tasks = payload.get("tasks", [])
+        if 0 <= task_idx < len(tasks):
+            tasks.pop(task_idx)
+            payload["tasks"] = tasks
+            # Сброс ручного выбора — индексы сместились
+            payload["selected_indices"] = []
+            await update_pending_action(session, action_id, payload)
+    await callback.message.edit_text(
+        build_edit_menu_text(payload),
+        parse_mode="HTML",
+        reply_markup=build_edit_menu_kb(payload, action_id),
+    )
+    await callback.answer("Задача удалена")
+
+
+@router.callback_query(F.data.startswith("mtask:edit:"))
+async def cb_mtask_edit(callback: CallbackQuery, state: FSMContext) -> None:
+    parts = callback.data.split(":")
+    action_id = int(parts[2])
+    task_idx = int(parts[3])
+    async with get_session() as session:
+        action = await get_pending_action(session, action_id)
+        if action is None or action.kind != "meeting_tasks":
+            await callback.answer("Действие устарело", show_alert=True)
+            return
+        payload = action.payload
+        tasks = payload.get("tasks", [])
+        if not (0 <= task_idx < len(tasks)):
+            await callback.answer("Задача не найдена", show_alert=True)
+            return
+        current = format_task_line(tasks[task_idx])
+
+    await state.set_state(MeetingStates.waiting_task_edit)
+    await state.update_data(action_id=action_id, task_idx=task_idx)
+    await callback.message.edit_text(
+        f"✏️ <b>Изменение задачи {task_idx + 1}</b>\n\n"
+        f"Текущая: {current}\n\n"
+        "Пришли новый текст в формате:\n"
+        "<code>Название | исполнитель | 2025-01-31</code>\n\n"
+        "Исполнитель и дата необязательны.",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("mtask:add:"))
+async def cb_mtask_add(callback: CallbackQuery, state: FSMContext) -> None:
+    action_id = int(callback.data.split(":")[2])
+    async with get_session() as session:
+        action = await get_pending_action(session, action_id)
+        if action is None or action.kind != "meeting_tasks":
+            await callback.answer("Действие устарело", show_alert=True)
+            return
+
+    await state.set_state(MeetingStates.waiting_task_add)
+    await state.update_data(action_id=action_id)
+    await callback.message.edit_text(
+        "➕ <b>Новая задача</b>\n\n"
+        "Пришли текст в формате:\n"
+        "<code>Название | исполнитель | 2025-01-31</code>\n\n"
+        "Исполнитель и дата необязательны.",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+async def _rerender_edit_menu(message: Message, state: FSMContext) -> None:
+    """После ввода текста перерисовывает меню редактирования и чистит state."""
+    data = await state.get_data()
+    action_id = data.get("action_id")
+    await state.clear()
+    if action_id is None:
+        return
+    async with get_session() as session:
+        action = await get_pending_action(session, action_id)
+        if action is None or action.kind != "meeting_tasks":
+            await message.answer("Действие устарело.")
+            return
+        payload = action.payload
+    await message.answer(
+        build_edit_menu_text(payload),
+        parse_mode="HTML",
+        reply_markup=build_edit_menu_kb(payload, action_id),
+    )
+
+
+@router.message(MeetingStates.waiting_task_edit, F.text)
+async def step_mtask_edit(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    action_id = data.get("action_id")
+    task_idx = data.get("task_idx")
+    parsed = parse_task_input(message.text)
+    if not parsed["title"]:
+        await message.answer("⚠️ Название не может быть пустым. Попробуй ещё раз.")
+        return
+    async with get_session() as session:
+        action = await get_pending_action(session, action_id)
+        if action is None or action.kind != "meeting_tasks":
+            await state.clear()
+            await message.answer("Действие устарело.")
+            return
+        payload = action.payload
+        tasks = payload.get("tasks", [])
+        if task_idx is not None and 0 <= task_idx < len(tasks):
+            tasks[task_idx] = parsed
+            payload["tasks"] = tasks
+            await update_pending_action(session, action_id, payload)
+    await _rerender_edit_menu(message, state)
+
+
+@router.message(MeetingStates.waiting_task_add, F.text)
+async def step_mtask_add(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    action_id = data.get("action_id")
+    parsed = parse_task_input(message.text)
+    if not parsed["title"]:
+        await message.answer("⚠️ Название не может быть пустым. Попробуй ещё раз.")
+        return
+    async with get_session() as session:
+        action = await get_pending_action(session, action_id)
+        if action is None or action.kind != "meeting_tasks":
+            await state.clear()
+            await message.answer("Действие устарело.")
+            return
+        payload = action.payload
+        tasks = payload.get("tasks", [])
+        tasks.append(parsed)
+        payload["tasks"] = tasks
+        payload["selected_indices"] = []
+        await update_pending_action(session, action_id, payload)
+    await _rerender_edit_menu(message, state)
