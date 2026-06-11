@@ -243,14 +243,18 @@ async def cb_mtask_confirm(callback: CallbackQuery) -> None:
         payload = action.payload
         tasks = payload["tasks"]
         meeting_id = payload["meeting_id"]
-        team = await session.get(Team, payload["team_id"])
+        team_id = payload.get("team_id")
+        team = await session.get(Team, team_id) if team_id else None
         await delete_pending_action(session, action_id)
-    
+
     if not team or not team.kanban_token:
-        await callback.message.edit_text("❌ Канбан больше не подключён. Задачи не созданы.")
+        await callback.message.edit_text(
+            "⚠️ YouGile не подключён, задачи не созданы на доске.\n"
+            "Подключи интеграцию через /kanban и попробуй снова."
+        )
         await callback.answer()
         return
-    
+
     # Create tasks in YouGile
     created, failed, titles, board_name = await create_yougile_tasks_from_meeting(
         team, tasks, meeting_id, callback.message.chat.id, callback.bot
@@ -344,11 +348,15 @@ async def cb_mtask_create_selected(callback: CallbackQuery) -> None:
         payload = action.payload
         tasks = payload["tasks"]
         meeting_id = payload["meeting_id"]
-        team = await session.get(Team, payload["team_id"])
+        team_id = payload.get("team_id")
+        team = await session.get(Team, team_id) if team_id else None
         await delete_pending_action(session, action_id)
 
     if not team or not team.kanban_token:
-        await callback.message.edit_text("❌ Канбан больше не подключён. Задачи не созданы.")
+        await callback.message.edit_text(
+            "⚠️ YouGile не подключён, задачи не созданы на доске.\n"
+            "Подключи интеграцию через /kanban и попробуй снова."
+        )
         await callback.answer()
         return
 
