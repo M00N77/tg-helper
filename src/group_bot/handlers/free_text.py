@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from src.config import settings as app_settings
 from src.core.agent import route_group_intent
+from src.core.sentiment import analyze_sentiment_and_risk
 from src.core.timeutil import now_in_tz
 from src.db.models import TeamMember
 from src.db.repo import (
@@ -19,12 +20,14 @@ from src.db.repo import (
     get_team_member,
     list_team_members,
     ensure_team_member,
+    save_message_sentiment,
+    save_message_risk,
 )
 from src.db.session import get_session
 from src.group_bot.filters import GroupOnly
 from src.group_bot.permissions import is_admin
 from src.bot.handlers.yougile import YouGileClient
-from src.llm.router import build_provider
+from src.llm.router import get_provider_chain
 
 logger = logging.getLogger(__name__)
 router = Router(name="group_free_text")
@@ -195,7 +198,6 @@ async def confirm_task_approval(message: Message) -> None:
         if action is None or action.kind != "group_task_approval":
             return
         payload = action.payload
-        await delete_pending_action(session, action_id)
         team = await get_team_by_chat(session, chat_id)
         if team is None:
             return
@@ -208,6 +210,9 @@ async def confirm_task_approval(message: Message) -> None:
         message, team, payload["title"], payload["description"],
         payload.get("deadline"), target_member,
     )
+
+    async with get_session() as session:
+        await delete_pending_action(session, action_id)
 
 
 async def _find_task_by_title(client: YouGileClient, title_hint: str) -> dict | None:
@@ -459,17 +464,53 @@ async def group_free_text(message: Message) -> None:
             return
 
         member = await ensure_team_member(session, team.id, user_id, display_name)
-        owner_for_llm = await get_or_create_user(session, app_settings.owner_telegram_id)
-        provider = await build_provider(session, owner_for_llm)
+        owner_for_llm = await get_or_create_user(session, message.from_user.id)
+        providers = await get_provider_chain(session, owner_for_llm)
 
-    if provider is None:
-        return
+        if not providers:
+            owner_for_llm = await get_or_create_user(session, app_settings.owner_telegram_id)
+            providers = await get_provider_chain(session, owner_for_llm)
+        if not providers:
+            await message.answer("🔑 Нужен LLM-ключ. Добавь в /settings → 🔑 API-ключи.")
+            return
 
-    now_local_str = now_in_tz(owner_for_llm.settings.timezone).strftime("%Y-%m-%d %H:%M")
+        tz_name = owner_for_llm.settings.timezone or "UTC"
+
+        result = await analyze_sentiment_and_risk(message.text, providers[0])
+        if result is not None:
+            logger.info(
+                "sentiment_check: chat=%s user=%s has_risk=%s sentiment=%s text=%r",
+                message.chat.id, message.from_user.id,
+                result.has_risk, result.sentiment, message.text[:80],
+            )
+            await save_message_sentiment(
+                session,
+                team_id=team.id,
+                user_id=message.from_user.id,
+                display_name=message.from_user.full_name,
+                sentiment=result.sentiment,
+            )
+            if result.has_risk:
+                await save_message_risk(
+                    session,
+                    team_id=team.id,
+                    user_id=message.from_user.id,
+                    display_name=message.from_user.full_name,
+                    message_text=message.text,
+                    risk_reason=result.risk_reason,
+                )
+                await message.answer(
+                    f"⚠️ <b>Обнаружен риск</b>\n"
+                    f"👤 {message.from_user.full_name}\n"
+                    f"📝 {result.risk_reason}",
+                    disable_notification=True,
+                )
+
+    now_local_str = now_in_tz(tz_name).strftime("%Y-%m-%d %H:%M")
 
     try:
         intent = await route_group_intent(
-            provider, message.text, now_local=now_local_str, tz_name=owner_for_llm.settings.timezone,
+            providers[0], message.text, now_local=now_local_str, tz_name=tz_name,
         )
     except Exception:
         logger.exception("group agent failed")

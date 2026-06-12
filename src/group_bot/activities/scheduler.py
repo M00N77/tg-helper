@@ -10,12 +10,15 @@
 """
 import asyncio
 import logging
+from datetime import date, datetime, timedelta
 
 from aiogram import Bot
-from sqlalchemy import select
+from aiogram.exceptions import TelegramMigrateToChat
 
 from src.bot.app import get_bot
 from src.core.timeutil import now_in_tz
+from sqlalchemy import select
+
 from src.db.models import ActivitySession, Team
 from src.db.repo import (
     create_activity_session,
@@ -23,10 +26,10 @@ from src.db.repo import (
     list_due_activity_sessions,
     mark_activity_summary_posted,
     set_activity_message_id,
+    update_team_chat_id,
 )
 from src.db.session import get_session
 from src.group_bot.activities.registry import DEFAULT_SCHEDULED_ACTIVITY, get_activity
-
 logger = logging.getLogger(__name__)
 
 # TZ команд для расписания (как в standup_scheduler — Europe/Moscow для отдела).
@@ -91,6 +94,25 @@ async def post_activity_summary(bot: Bot, act: "ActivitySession") -> bool:
             reply_to_message_id=act.telegram_message_id,
             parse_mode="HTML",
         )
+    except TelegramMigrateToChat as e:
+        new_chat_id = e.migrate_to_chat_id
+        logger.info(
+            "Activity session %d: chat migrated %s -> %s",
+            act.id, act.chat_id, new_chat_id,
+        )
+        async with get_session() as session:
+            await update_team_chat_id(session, act.chat_id, new_chat_id)
+        act.chat_id = new_chat_id
+        try:
+            await bot.send_message(
+                chat_id=new_chat_id,
+                text=summary,
+                reply_to_message_id=act.telegram_message_id,
+                parse_mode="HTML",
+            )
+        except Exception:
+            logger.exception("Failed to post activity summary after migration")
+            return False
     except Exception:
         logger.exception("Failed to post activity summary for session %s", act.id)
         return False

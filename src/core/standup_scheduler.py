@@ -1,4 +1,4 @@
-"""Ежедневный стендап-шедулер и эскалация блокеров."""
+"""Ежедневный статус-опрос шедулер и эскалация подвисших задач."""
 import asyncio
 import logging
 from datetime import datetime, timedelta
@@ -14,11 +14,11 @@ from src.db.session import get_session
 logger = logging.getLogger(__name__)
 
 STANDUP_TEXT = (
-    "☀ <b>Ежедневный стендап — {date}</b>\n\n"
+    "☀ <b>Ежедневный статус-опрос — {date}</b>\n\n"
     "@all, напишите в ответ на это сообщение:\n"
     "• Что сделано вчера?\n"
     "• Что планируете сегодня?\n"
-    "• Есть ли блокеры?\n\n"
+    "• Есть ли подвисшие задачи?\n\n"
     "<i>(или просто напишите текстом — я сам разберу)</i>"
 )
 
@@ -31,7 +31,7 @@ ESCALATION_THRESHOLDS = {
 
 
 async def _post_standup(bot: Bot, team: "Team") -> None:
-    """Постит стендап в групповой чат команды и сохраняет message_id."""
+    """Постит статус-опрос в групповой чат команды и сохраняет message_id."""
     date_str = datetime.utcnow().strftime("%d.%m.%Y")
     try:
         msg = await bot.send_message(
@@ -48,7 +48,7 @@ async def _post_standup(bot: Bot, team: "Team") -> None:
 
 
 async def standup_scheduler_loop() -> None:
-    """Каждую минуту проверяет, пора ли постить стендап для каждой команды."""
+    """Каждую минуту проверяет, пора ли постить статус-опрос для каждой команды."""
     last_sent: dict[int, str] = {}  # team_id -> "YYYY-MM-DD"
     while True:
         try:
@@ -77,7 +77,7 @@ async def standup_scheduler_loop() -> None:
 
 
 async def blocker_escalation_loop() -> None:
-    """Каждые 30 минут пингует незакрытые блокеры."""
+    """Каждые 30 минут пингует незакрытые подвисшие задачи."""
     while True:
         try:
             bot = get_bot()
@@ -103,7 +103,7 @@ async def blocker_escalation_loop() -> None:
                         await bot.send_message(
                             chat_id=team.chat_id,
                             text=(
-                                f"{icon} <b>Эскалация блокера #{b.id}</b>\n"
+                                f"{icon} <b>Эскалация задачи #{b.id}</b>\n"
                                 f"от {b.display_name}: {b.description[:200]}\n"
                                 f"Висит {age_h:.0f}ч · /blocker_resolve {b.id}"
                             ),

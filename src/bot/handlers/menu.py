@@ -5,7 +5,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from src.bot.filters import OwnerOnly, is_team_owner
+from src.bot.filters import OwnerOnly, is_team_owner, get_team_for_event
 from src.bot.states import MenuStates
 from src.core.news import build_news_digest
 from src.core.timeutil import fmt_local
@@ -13,7 +13,6 @@ from src.db.repo import (
     add_news_topic,
     get_api_key,
     get_or_create_user,
-    get_team_by_chat,
     list_contacts,
     list_news_topics,
     list_open_commitments,
@@ -223,7 +222,7 @@ async def handle_send_query(message: Message, state: FSMContext, userbot_manager
 @router.callback_query(F.data == "menu:kanban")
 async def cb_menu_kanban(callback: CallbackQuery, state: FSMContext) -> None:
     async with get_session() as session:
-        team = await get_team_by_chat(session, callback.message.chat.id)
+        team = await get_team_for_event(session, callback)
 
     if not team or not team.kanban_token:
         text = breadcrumb("📊 Канбан") + "📊 Канбан — подключи YouGile чтобы начать"
@@ -296,7 +295,7 @@ async def cb_menu_kanban_board(callback: CallbackQuery, state: FSMContext) -> No
 async def cb_menu_kanban_open(callback: CallbackQuery) -> None:
     board_id = callback.data.split(":", 3)[3]
     async with get_session() as session:
-        team = await get_team_by_chat(session, callback.message.chat.id)
+        team = await get_team_for_event(session, callback)
     from src.bot.handlers.kanban import build_board_text
     from src.bot.handlers.yougile import YouGileClient
     client = YouGileClient(team.kanban_token, board_id)

@@ -5,7 +5,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from src.bot.filters import OwnerOrTeamMember, is_team_owner
+from src.bot.filters import OwnerOrTeamMember, is_team_owner, get_team_for_event
 from src.bot.states import TeamStates
 from src.db.models import Team
 from src.db.repo import (
@@ -204,7 +204,7 @@ async def step_invite(message: Message, state: FSMContext):
 async def cb_team_members(callback: CallbackQuery):
     """Список участников команды"""
     async with get_session() as session:
-        team = await get_team_by_chat(session, callback.message.chat.id)
+        team = await get_team_for_event(session, callback)
         if not team:
             await callback.message.edit_text("❌ Команда не найдена")
             await callback.answer()
@@ -232,7 +232,7 @@ async def cb_team_members(callback: CallbackQuery):
 async def cb_team_invite(callback: CallbackQuery, state: FSMContext):
     """Приглашение участника из callback"""
     async with get_session() as session:
-        team = await get_team_by_chat(session, callback.message.chat.id)
+        team = await get_team_for_event(session, callback)
     if not team:
         await callback.message.edit_text("❌ Команда не найдена")
         await callback.answer()
@@ -255,7 +255,7 @@ async def cb_team_invite(callback: CallbackQuery, state: FSMContext):
 async def cb_team_settings(callback: CallbackQuery):
     """Настройки команды"""
     async with get_session() as session:
-        team = await get_team_by_chat(session, callback.message.chat.id)
+        team = await get_team_for_event(session, callback)
 
     if not team:
         await callback.message.edit_text("❌ Команда не найдена")
@@ -309,7 +309,7 @@ async def cb_team_list(callback: CallbackQuery):
 async def cb_team_kanban(callback: CallbackQuery):
     """Подключение канбана из меню команды"""
     async with get_session() as session:
-        team = await get_team_by_chat(session, callback.message.chat.id)
+        team = await get_team_for_event(session, callback)
 
     if not team:
         await callback.message.edit_text("❌ Команда не найдена")
@@ -342,7 +342,7 @@ async def cb_team_kanban(callback: CallbackQuery):
 async def cb_team_back(callback: CallbackQuery):
     """Назад в главное меню команды"""
     async with get_session() as session:
-        team = await get_team_by_chat(session, callback.message.chat.id)
+        team = await get_team_for_event(session, callback)
 
     kb = InlineKeyboardBuilder()
     if team:

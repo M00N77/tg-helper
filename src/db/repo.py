@@ -2,7 +2,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import select, text as sql_text
+from sqlalchemy import desc, select, text as sql_text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,9 +16,12 @@ from src.db.models import (
     Contact,
     Meeting,
     Message,
+    MessageRisk,
+    MessageSentiment,
     NewsTopic,
     PendingAction,
     PendingInvite,
+    PendingTeamTask,
     Blocker,
     EmailMessage,
     SociometryCache,
@@ -514,6 +517,111 @@ async def delete_pending_action(session: AsyncSession, action_id: int) -> None:
         await session.delete(pa)
 
 
+async def create_pending_team_task(
+    session: AsyncSession,
+    *,
+    team_id: int,
+    creator_telegram_id: int,
+    assignee_telegram_id: int,
+    title: str,
+    description: str | None = None,
+) -> PendingTeamTask:
+    pt = PendingTeamTask(
+        team_id=team_id,
+        creator_telegram_id=creator_telegram_id,
+        assignee_telegram_id=assignee_telegram_id,
+        title=title,
+        description=description,
+    )
+    session.add(pt)
+    await session.flush()
+    return pt
+
+
+async def get_pending_team_task(
+    session: AsyncSession,
+    task_id: int,
+) -> PendingTeamTask | None:
+    return await session.get(PendingTeamTask, task_id)
+
+
+async def confirm_pending_team_task(
+    session: AsyncSession,
+    task_id: int,
+    assignee_telegram_id: int,
+) -> PendingTeamTask | None:
+    """Атомарно: pending → processing. Гарантирует идемпотентность при двойном клике.
+    Если строка уже не 'pending', возвращает None."""
+    result = await session.execute(
+        sql_text("""
+            UPDATE pending_team_tasks
+            SET status = 'processing', updated_at = NOW()
+            WHERE id = :tid AND status = 'pending' AND assignee_telegram_id = :aid
+            RETURNING id
+        """),
+        {"tid": task_id, "aid": assignee_telegram_id},
+    )
+    row = result.fetchone()
+    if row is None:
+        return None
+    await session.expire_all()
+    return await session.get(PendingTeamTask, row[0])
+
+
+async def reject_pending_team_task(
+    session: AsyncSession,
+    task_id: int,
+    assignee_telegram_id: int,
+) -> PendingTeamTask | None:
+    """Атомарно: pending → rejected. Идемпотентно."""
+    result = await session.execute(
+        sql_text("""
+            UPDATE pending_team_tasks
+            SET status = 'rejected', updated_at = NOW()
+            WHERE id = :tid AND status = 'pending' AND assignee_telegram_id = :aid
+            RETURNING id
+        """),
+        {"tid": task_id, "aid": assignee_telegram_id},
+    )
+    row = result.fetchone()
+    if row is None:
+        return None
+    await session.expire_all()
+    return await session.get(PendingTeamTask, row[0])
+
+
+async def mark_team_task_approved(
+    session: AsyncSession,
+    task_id: int,
+    yougile_task_id: str,
+) -> None:
+    """processing → approved (YouGile создана)."""
+    await session.execute(
+        sql_text("""
+            UPDATE pending_team_tasks
+            SET status = 'approved', yougile_task_id = :yid, updated_at = NOW()
+            WHERE id = :tid AND status = 'processing'
+        """),
+        {"tid": task_id, "yid": yougile_task_id},
+    )
+
+
+async def mark_team_task_failed(
+    session: AsyncSession,
+    task_id: int,
+    error_message: str,
+) -> None:
+    """processing → pending (YouGile отказал, можно повторить)."""
+    await session.execute(
+        sql_text("""
+            UPDATE pending_team_tasks
+            SET status = 'pending', error_message = :err, updated_at = NOW()
+            WHERE id = :tid AND status = 'processing'
+        """),
+        {"tid": task_id, "err": error_message},
+    )
+
+
 async def list_news_topics(
     session: AsyncSession,
     user: User,
@@ -578,6 +686,35 @@ async def get_team_by_chat(
 ) -> Team | None:
     result = await session.execute(
         select(Team).where(Team.chat_id == chat_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def update_team_chat_id(
+    session: AsyncSession, old_chat_id: int, new_chat_id: int
+) -> Team | None:
+    """Обновляет chat_id команды при миграции группы → супергруппу.
+    Также обновляет все activity_sessions со старым chat_id."""
+    team = await get_team_by_chat(session, old_chat_id)
+    if team is None:
+        return None
+    team.chat_id = new_chat_id
+    await session.execute(
+        sql_text("""
+            UPDATE activity_sessions
+            SET chat_id = :new_id
+            WHERE chat_id = :old_id
+        """),
+        {"new_id": new_chat_id, "old_id": old_chat_id},
+    )
+    return team
+
+
+async def get_team_by_owner(
+    session: AsyncSession, owner_telegram_id: int
+) -> Team | None:
+    result = await session.execute(
+        select(Team).where(Team.owner_telegram_id == owner_telegram_id)
     )
     return result.scalar_one_or_none()
 
@@ -1342,3 +1479,110 @@ async def aggregate_pulse_responses(
         by_day=by_day,
         trend=trend,
     )
+
+
+@dataclass
+class TeamSentimentAggregate:
+    total: int
+    positive: int
+    negative: int
+    neutral: int
+    speech: int
+    positive_pct: float
+    negative_pct: float
+    neutral_pct: float
+    speech_pct: float
+
+
+async def aggregate_team_sentiment(
+    session: AsyncSession,
+    team_id: int,
+    *,
+    days: int = 7,
+    user_id: int | None = None,
+) -> TeamSentimentAggregate:
+    from datetime import timedelta
+
+    since = datetime.utcnow() - timedelta(days=days)
+
+    query = select(MessageSentiment).where(
+        MessageSentiment.team_id == team_id,
+        MessageSentiment.created_at >= since,
+    )
+    if user_id is not None:
+        query = query.where(MessageSentiment.user_id == user_id)
+
+    result = await session.execute(query)
+    rows = list(result.scalars().all())
+
+    total = len(rows)
+    positive = sum(1 for r in rows if r.sentiment == "positive")
+    negative = sum(1 for r in rows if r.sentiment == "negative")
+    neutral = sum(1 for r in rows if r.sentiment == "neutral")
+    speech = sum(1 for r in rows if r.sentiment == "speech")
+
+    def pct(v: int) -> float:
+        return round(v / total * 100, 1) if total else 0.0
+
+    return TeamSentimentAggregate(
+        total=total,
+        positive=positive,
+        negative=negative,
+        neutral=neutral,
+        speech=speech,
+        positive_pct=pct(positive),
+        negative_pct=pct(negative),
+        neutral_pct=pct(neutral),
+        speech_pct=pct(speech),
+    )
+
+
+async def save_message_sentiment(
+    session: AsyncSession,
+    team_id: int,
+    user_id: int,
+    display_name: str,
+    sentiment: str,
+) -> None:
+    session.add(MessageSentiment(
+        team_id=team_id,
+        user_id=user_id,
+        display_name=display_name,
+        sentiment=sentiment,
+    ))
+
+
+async def save_message_risk(
+    session: AsyncSession,
+    team_id: int,
+    user_id: int,
+    display_name: str,
+    message_text: str,
+    risk_reason: str,
+    yougile_task_id: str | None = None,
+) -> MessageRisk:
+    risk = MessageRisk(
+        team_id=team_id,
+        user_id=user_id,
+        display_name=display_name,
+        message_text=message_text[:500],
+        risk_reason=risk_reason,
+        yougile_task_id=yougile_task_id,
+    )
+    session.add(risk)
+    await session.flush()
+    return risk
+
+
+async def get_recent_risks(
+    session: AsyncSession,
+    team_id: int,
+    limit: int = 10,
+) -> list[MessageRisk]:
+    result = await session.execute(
+        select(MessageRisk)
+        .where(MessageRisk.team_id == team_id)
+        .order_by(desc(MessageRisk.created_at))
+        .limit(limit)
+    )
+    return list(result.scalars().all())

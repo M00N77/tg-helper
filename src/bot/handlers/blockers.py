@@ -1,4 +1,4 @@
-"""Блокеры команды: /blockers, /blocker_resolve, /blocker_dismiss."""
+"""Подвисшие задачи: /blockers, /blocker_resolve, /blocker_dismiss."""
 from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
@@ -28,10 +28,10 @@ async def cmd_blockers(message: Message) -> None:
         open_b = await get_open_blockers(session, team.id)
 
     if not open_b:
-        await message.answer("✅ Открытых блокеров нет.")
+        await message.answer("✅ Подвисших задач нет.")
         return
 
-    lines = ["🚧 <b>Блокеры команды</b>\n"]
+    lines = ["🚧 <b>Подвисшие задачи команды</b>\n"]
     for b in open_b:
         icon = SEVERITY_ICON.get(b.severity, "⚠️")
         from datetime import datetime
@@ -55,9 +55,9 @@ async def cmd_blocker_resolve(message: Message) -> None:
     async with get_session() as session:
         ok = await resolve_blocker(session, blocker_id)
     if ok:
-        await message.answer(f"✅ Блокер #{blocker_id} закрыт.")
+        await message.answer(f"✅ Подвисшая задача #{blocker_id} закрыта.")
     else:
-        await message.answer(f"❌ Блокер #{blocker_id} не найден.")
+        await message.answer(f"❌ Подвисшая задача #{blocker_id} не найдена.")
 
 
 @router.message(Command(commands=["blocker_dismiss"]))
@@ -70,6 +70,6 @@ async def cmd_blocker_dismiss(message: Message) -> None:
     async with get_session() as session:
         ok = await dismiss_blocker(session, blocker_id)
     if ok:
-        await message.answer(f"🗑 Блокер #{blocker_id} отклонён.")
+        await message.answer(f"🗑 Подвисшая задача #{blocker_id} отклонена.")
     else:
-        await message.answer(f"❌ Блокер #{blocker_id} не найден.")
+        await message.answer(f"❌ Подвисшая задача #{blocker_id} не найдена.")

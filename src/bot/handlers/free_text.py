@@ -856,6 +856,23 @@ async def free_voice(
     notice = await message.answer("🎙 Слушаю… (транскрибирую)")
     try:
         await message.bot.download(media.file_id, destination=str(target))
+    except Exception:
+        client = userbot_manager.get_client(message.from_user.id)
+        if client is None:
+            await notice.edit_text(L.ERR_VOICE_FAIL)
+            return
+        try:
+            tg_msg = await client.get_messages(message.chat.id, ids=message.message_id)
+            if tg_msg is None:
+                await notice.edit_text(L.ERR_VOICE_FAIL)
+                return
+            await tg_msg.download_media(file=str(target))
+        except Exception:
+            logger.exception("voice download failed")
+            await notice.edit_text(L.ERR_VOICE_FAIL)
+            return
+
+    try:
         text = await transcription_service.transcribe(
             target,
             file_id=media.file_unique_id,

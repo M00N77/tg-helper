@@ -287,6 +287,12 @@ class Team(Base):
     time_logs: Mapped[list["TimeLog"]] = relationship(
         back_populates="team", cascade="all, delete-orphan",
     )
+    message_sentiments: Mapped[list["MessageSentiment"]] = relationship(
+        back_populates="team", cascade="all, delete-orphan",
+    )
+    risks: Mapped[list["MessageRisk"]] = relationship(
+        back_populates="team", cascade="all, delete-orphan",
+    )
 
 
 class TeamMember(Base):
@@ -302,6 +308,24 @@ class TeamMember(Base):
     joined_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     team: Mapped[Team] = relationship(back_populates="members")
+
+
+class PendingTeamTask(Base):
+    """Задача от участника команды, ожидающая подтверждения исполнителем."""
+
+    __tablename__ = "pending_team_tasks"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    creator_telegram_id: Mapped[int] = mapped_column(BigInteger)
+    assignee_telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    title: Mapped[str] = mapped_column(String(256))
+    description: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    yougile_task_id: Mapped[str | None] = mapped_column(String(128), nullable=True, default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class PendingInvite(Base):
@@ -478,6 +502,19 @@ class ActivityResponse(Base):
     session: Mapped["ActivitySession"] = relationship(back_populates="responses")
 
 
+class MessageSentiment(Base):
+    __tablename__ = "message_sentiments"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    display_name: Mapped[str] = mapped_column(String(128), default="")
+    sentiment: Mapped[str] = mapped_column(String(16))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    team: Mapped["Team"] = relationship(back_populates="message_sentiments")
+
+
 class EmailMessage(Base):
     __tablename__ = "email_messages"
 
@@ -491,3 +528,18 @@ class EmailMessage(Base):
     deadline_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     commitment_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     processed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class MessageRisk(Base):
+    __tablename__ = "message_risks"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    display_name: Mapped[str] = mapped_column(String(256))
+    message_text: Mapped[str] = mapped_column(Text)
+    risk_reason: Mapped[str] = mapped_column(Text)
+    yougile_task_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    team: Mapped["Team"] = relationship(back_populates="risks")

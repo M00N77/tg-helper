@@ -1,8 +1,9 @@
 import logging
 
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, Router, types
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from src.bot.handlers import (
@@ -17,6 +18,7 @@ from src.bot.handlers import (
     weekly,
     burnout,
     team_mood,
+    sentiment_stats,
     tasks_rating,
     login,
     meeting,
@@ -35,9 +37,12 @@ from src.bot.handlers import (
     activities as activities_handlers,
 )
 from src.group_bot.handlers import (
+    director as group_director,
     free_text as group_free_text,
     link as group_link,
+    risks as group_risks,
     setup_kanban as group_setup_kanban,
+    tasks as group_tasks,
 )
 from src.config import settings
 from src.core.notifier import notifier
@@ -49,6 +54,22 @@ from src.services.webhook_server import start_webhook_server, stop_webhook_serve
 
 
 logger = logging.getLogger(__name__)
+
+
+debug_logger = logging.getLogger("debug.catch_all")
+debug_router = Router(name="debug_catch_all")
+
+
+@debug_router.message()
+async def catch_all_debug(message: types.Message, state: FSMContext):
+    current_state = await state.get_state()
+    debug_logger.info(
+        "[CATCH-ALL] text=%s chat_id=%s user_id=%s state=%s",
+        (message.text or "(non-text)")[:100],
+        message.chat.id,
+        message.from_user.id if message.from_user else None,
+        current_state,
+    )
 
 _bot: Bot | None = None
 
@@ -91,6 +112,7 @@ async def run_bot(userbot_manager: UserbotManager) -> None:
     dp.include_router(weekly.router)
     dp.include_router(burnout.router)
     dp.include_router(team_mood.router)
+    dp.include_router(sentiment_stats.router)
     dp.include_router(tasks_rating.router)
     dp.include_router(meeting.router)
     dp.include_router(team_handlers.router)
@@ -99,11 +121,16 @@ async def run_bot(userbot_manager: UserbotManager) -> None:
     dp.include_router(activities_handlers.router)
     # Групповой HR-функционал (создание задач, права участников, согласование).
     # GroupOnly-фильтр гарантирует, что эти роутеры срабатывают только в группах.
+    dp.include_router(group_director.router)
     dp.include_router(group_setup_kanban.router)
     dp.include_router(group_link.make_router())
+    dp.include_router(group_risks.router)
+    dp.include_router(group_tasks.router)
     dp.include_router(group_free_text.router)
     # ВАЖНО: free_text — самым последним, чтобы команды и FSM перехватили текст раньше
     dp.include_router(free_text.router)
+    # Catch-all debug роутер — логирует все необработанные сообщения
+    dp.include_router(debug_router)
 
     try:
         me = await bot.get_me()
