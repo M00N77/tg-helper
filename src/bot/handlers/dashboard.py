@@ -27,11 +27,11 @@ NOW_MS = lambda: int(time.time() * 1000)
 TODAY = lambda: datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
 
 MOOD_PROMPT = (
-    "Оцени общий тон команды по последним сообщениям и стендапам. "
+    "Оцени общий тон команды по последним сообщениям и статус-опросам. "
     "Выдели главные риски (1-2 фразы). "
     "Ответь СТРОГО в формате:\n"
-    "MOOD: позитивное|нейтральное|напряжённое\n"
-    "RISKS: <текст>\n\n"
+    "Настроение: позитивное|нейтральное|напряжённое\n"
+    "Риск-теги в сообщениях чата: <текст>\n\n"
     "Данные:\n{data}"
 )
 
@@ -63,29 +63,29 @@ async def cmd_pm_dashboard(message: Message) -> None:
         f"🏢 {team.name or 'Команда'} · {today.strftime('%d.%m.%Y')}\n",
     ]
 
-    # Стендап
+    # Статус-опрос
     answered = len(standups_today)
     total_m = len(members)
     moods = [s.mood for s in standups_today]
     mood_emoji = "🟢" if moods.count("positive") > len(moods) // 2 else (
         "🔴" if moods.count("negative") > len(moods) // 2 else "🟡"
     )
-    lines.append(f"☀ <b>Стендап сегодня:</b> {answered}/{total_m} ответили {mood_emoji}")
+    lines.append(f"☀ <b>Статус-опрос сегодня:</b> {answered}/{total_m} ответили {mood_emoji}")
 
-    # Блокеры
+    # Подвисшие задачи
     critical = [b for b in open_blockers if b.severity == "critical"]
     high = [b for b in open_blockers if b.severity == "high"]
     medium = [b for b in open_blockers if b.severity == "medium"]
     if open_blockers:
         lines.append(
-            f"\n🚧 <b>Блокеры: {len(open_blockers)}</b>"
+            f"\n🚧 <b>Подвисшие задачи: {len(open_blockers)}</b>"
             f"  🔴{len(critical)} 🟠{len(high)} 🟡{len(medium)}"
         )
         for b in open_blockers[:3]:
             icon = {"critical": "🔴", "high": "🟠", "medium": "🟡"}.get(b.severity, "⚠️")
             lines.append(f"  {icon} {b.display_name}: {b.description[:80]}")
     else:
-        lines.append("\n✅ <b>Блокеров нет</b>")
+        lines.append("\n✅ <b>Подвисших задач нет</b>")
 
     # Обязательства
     mine = [c for c in commitments if c.direction == "mine"]
@@ -136,13 +136,13 @@ async def cmd_pm_dashboard(message: Message) -> None:
         try:
             standup_texts = "\n".join(
                 f"{s.display_name}: {s.done_today} / план: {s.plan_today}"
-                + (f" / блокер: {s.blockers}" if s.blockers else "")
+                + (f" / подвисшая задача: {s.blockers}" if s.blockers else "")
                 for s in standups_today[:10]
             )
             blocker_texts = "\n".join(
                 f"{b.severity}: {b.description[:100]}" for b in open_blockers[:5]
             )
-            data = f"Стендапы:\n{standup_texts}\n\nБлокеры:\n{blocker_texts}"
+            data = f"Статус-опросы:\n{standup_texts}\n\nПодвисшие задачи:\n{blocker_texts}"
             raw = await provider.chat(
                 [ChatMessage(role="user", content=MOOD_PROMPT.format(data=data))],
                 heavy=False,

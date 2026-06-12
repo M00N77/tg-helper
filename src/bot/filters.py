@@ -2,7 +2,7 @@ from aiogram.filters import BaseFilter
 from aiogram.types import CallbackQuery, Message
 
 from src.config import settings
-from src.db.repo import get_team_by_chat, get_team_members
+from src.db.repo import get_team_by_chat, get_team_by_owner, get_team_members
 from src.db.session import get_session
 
 
@@ -64,5 +64,16 @@ async def is_team_owner(event: Message | CallbackQuery) -> bool:
     async with get_session() as session:
         team = await get_team_by_chat(session, chat_id)
         if team is None:
+            team = await get_team_by_owner(session, uid)
+        if team is None:
             return False
     return team.owner_telegram_id == uid
+
+
+async def get_team_for_event(session, event: Message | CallbackQuery):
+    """Возвращает команду по чату события, с fallback на поиск по владельцу для ЛС."""
+    chat_id = _get_chat_id(event)
+    team = await get_team_by_chat(session, chat_id)
+    if team is None and event.from_user:
+        team = await get_team_by_owner(session, event.from_user.id)
+    return team

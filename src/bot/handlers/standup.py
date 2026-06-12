@@ -1,4 +1,4 @@
-"""Стендап-хендлеры: /standup, /standup_status, /standup_skip и обработка ответов."""
+"""Статус-опрос хендлеры: /standup, /standup_status, /standup_skip и обработка ответов."""
 import json
 import logging
 from datetime import datetime, timezone
@@ -27,10 +27,10 @@ router = Router(name="standup")
 router.message.filter(OwnerOrTeamMember())
 
 STANDUP_PARSE_PROMPT = """\
-Ты парсер ежедневного стендапа. Из сообщения сотрудника извлеки:
+Ты парсер ежедневного статус-опроса. Из сообщения сотрудника извлеки:
 1. done_today — что сделано (кратко)
 2. plan_today — что планирует (кратко)
-3. blockers — блокеры (если есть слова: жду, stuck, blocked, проблема, не могу, зависит) или null
+3. blockers — подвисшие задачи (если есть слова: жду, stuck, blocked, проблема, не могу, зависит) или null
 4. mood — positive | neutral | negative
 
 Верни ТОЛЬКО JSON без markdown:
@@ -42,7 +42,7 @@ TODAY_START = lambda: datetime.utcnow().replace(hour=0, minute=0, second=0, micr
 
 @router.message(Command("standup"))
 async def cmd_standup(message: Message) -> None:
-    """Вручную постит стендап (для теста)."""
+    """Вручную постит статус-опрос (для теста)."""
     from src.core.standup_scheduler import STANDUP_TEXT, _post_standup
     from src.bot.app import get_bot
 
@@ -73,16 +73,16 @@ async def cmd_standup_status(message: Message) -> None:
 
     blockers_count = sum(1 for s in standups if s.blockers and s.blockers != "null")
 
-    lines = [f"☀ <b>Стендап {today.strftime('%d.%m.%Y')}</b>\n"]
+    lines = [f"☀ <b>Статус-опрос {today.strftime('%d.%m.%Y')}</b>\n"]
     if answered_ids:
         names = ", ".join(s.display_name or str(s.user_id) for s in standups)
         lines.append(f"✅ Ответили: {names}")
     if not_answered:
         lines.append(f"❌ Не ответили: {len(not_answered)} чел.")
     if blockers_count:
-        lines.append(f"🚧 Блокеры: {blockers_count}")
+        lines.append(f"🚧 Подвисшие задачи: {blockers_count}")
     else:
-        lines.append("✅ Блокеров нет")
+        lines.append("✅ Подвисших задач нет")
 
     await message.answer("\n".join(lines), parse_mode="HTML")
 
@@ -109,22 +109,22 @@ async def cmd_standup_skip(message: Message) -> None:
             blockers="",
             mood="neutral",
         )
-    await message.answer("✅ Стендап пропущен.")
+    await message.answer("✅ Статус-опрос пропущен.")
 
 
 @router.message(F.reply_to_message)
 async def handle_standup_reply(message: Message) -> None:
-    """Перехватывает ответы на стендап-сообщение бота."""
+    """Перехватывает ответы на статус-опрос бота."""
     if not message.from_user or not message.text:
         raise SkipHandler
 
     async with get_session() as session:
         team = await get_team_by_chat(session, message.chat.id)
         if not team or not team.standup_msg_id:
-            # Не стендап-чат — пропускаем дальше (например, к согласованию задач).
+            # Не статус-опрос чат — пропускаем дальше (например, к согласованию задач).
             raise SkipHandler
         if message.reply_to_message.message_id != team.standup_msg_id:
-            # Ответ не на стендап-сообщение — отдаём другим роутерам.
+            # Ответ не на статус-опрос — отдаём другим роутерам.
             raise SkipHandler
 
         owner = await get_or_create_user(session, message.from_user.id)

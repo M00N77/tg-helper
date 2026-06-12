@@ -1,6 +1,10 @@
 """Интеграция с YouGile канбан-доской."""
+import logging
 from datetime import datetime
 from aiogram import Router, F
+from aiogram.exceptions import TelegramBadRequest
+
+logger = logging.getLogger(__name__)
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
@@ -13,14 +17,14 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from src.bot.filters import is_team_owner
+from src.bot.filters import is_team_owner, get_team_for_event
 from src.bot.states import KanbanStates, KanbanAuthStates, KanbanCardStates
 
 from src.bot.handlers.yougile import YouGileClient, _parse_deadline
 from sqlalchemy import select
 from src.db.session import get_session
 from src.db.repo import (
-    set_active_board, update_team_kanban, get_team_by_chat,
+    set_active_board, update_team_kanban,
     get_team_members, get_or_create_user, set_team_member_yougile_id,
 )
 from src.db.models import TeamMember
@@ -86,7 +90,7 @@ def format_card_preview(task: dict, column_title: str, users_dict: dict[str, str
 async def cmd_kanban(message: Message):
     """Управление канбан-доской"""
     async with get_session() as session:
-        team = await get_team_by_chat(session, message.chat.id)
+        team = await get_team_for_event(session, message)
     
     is_owner = await is_team_owner(message)
     
@@ -205,9 +209,9 @@ async def step_kanban_token(message: Message, state: FSMContext):
     
     # Сохраняем в БД
     async with get_session() as session:
-        team = await get_team_by_chat(session, message.chat.id)
+        team = await get_team_for_event(session, message)
         if team:
-            await update_team_kanban(session, message.chat.id, token, board_id, provider)
+            await update_team_kanban(session, team.chat_id, token, board_id, provider)
     
     await state.clear()
     
@@ -225,11 +229,47 @@ async def step_kanban_token(message: Message, state: FSMContext):
 @router.callback_query(F.data == "kanban:board")
 async def cb_kanban_board(callback: CallbackQuery):
     """Показать текущую канбан-доску"""
+    chat_id = callback.message.chat.id if callback.message else 0
     async with get_session() as session:
-        team = await get_team_by_chat(session, callback.message.chat.id)
+        team = await get_team_for_event(session, callback)
+
+    logger.info(
+        "[DEBUG BOARD] chat_id=%s team=%s team.kanban_token=%s team.kanban_board_id=%s",
+        chat_id,
+        team.id if team else None,
+        team.kanban_token[:8] + "..." if team and team.kanban_token else None,
+        team.kanban_board_id if team else None,
+    )
+
     if not team or not team.kanban_token:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
+
+    if not team.kanban_board_id:
+        logger.warning("[DEBUG BOARD] board_id is None for chat_id=%s, trying auto-setup", chat_id)
+        try:
+            client = YouGileClient(team.kanban_token)
+            boards = await client.get_boards()
+            if len(boards) == 0:
+                await callback.answer("❌ В аккаунте YouGile нет досок. Создайте доску в YouGile.", show_alert=True)
+                return
+            if len(boards) == 1:
+                board = boards[0]
+                async with get_session() as session:
+                    team_db = await get_team_for_event(session, callback)
+                    if team_db:
+                        await update_team_kanban(session, team_db.chat_id, team.kanban_token, board["id"])
+                await callback.answer(f"✅ Автоматически привязана доска «{board['title']}»", show_alert=True)
+                team.kanban_board_id = board["id"]
+            else:
+                await callback.answer("📋 Несколько досок. Используйте /kanban_board в ЛС бота.", show_alert=True)
+                return
+        except Exception as e:
+            logger.exception("[DEBUG BOARD] Auto-setup failed for chat_id=%s", chat_id)
+            await callback.answer(f"❌ Ошибка при получении досок: {e}", show_alert=True)
+            return
+
+    await callback.answer()
 
     client = YouGileClient(team.kanban_token, team.kanban_board_id)
     text = await build_board_text(client, "Канбан-доска")
@@ -247,8 +287,10 @@ async def cb_kanban_board(callback: CallbackQuery):
     kb.row(InlineKeyboardButton(text="🔄 Обновить", callback_data="kanban:board"))
     kb.row(InlineKeyboardButton(text="➕ Добавить задачу", callback_data="kanban:add"))
 
-    await callback.message.edit_text(text, reply_markup=kb.as_markup())
-    await callback.answer()
+    try:
+        await callback.message.edit_text(text, reply_markup=kb.as_markup())
+    except TelegramBadRequest:
+        pass
 
 
 @router.message(Command("kanban_login"), F.chat.type == "private")
@@ -313,8 +355,9 @@ async def process_password(message: Message, state: FSMContext):
         client = YouGileClient(api_token="", board_id="")
         token = await client.generate_token(login, password, "")
         async with get_session() as session:
+            team = await get_team_for_event(session, message)
             await update_team_kanban(
-                session, message.chat.id, token
+                session, team.chat_id if team else message.chat.id, token
             )
         await wait_msg.edit_text(
             f"✅ Авторизация успешна!\n"
@@ -338,7 +381,7 @@ async def cmd_kanban_board(message: Message, state: FSMContext):
     args = message.text.split(maxsplit=1)
 
     async with get_session() as session:
-        team = await get_team_by_chat(session, message.chat.id)
+        team = await get_team_for_event(session, message)
 
     if not team or not team.kanban_token:
         await message.answer("❌ Сначала выполни /kanban_login")
@@ -354,7 +397,7 @@ async def cmd_kanban_board(message: Message, state: FSMContext):
             boards = []
         board_name = next((b["title"] for b in boards if b["id"] == board_id), board_id)
         async with get_session() as session:
-            await set_active_board(session, message.chat.id, board_id, board_name)
+            await set_active_board(session, team.chat_id, board_id, board_name)
         await message.answer(
             f"✅ Активная доска: <b>{board_name}</b>\n"
             "Все новые задачи будут создаваться сюда."
@@ -377,7 +420,7 @@ async def cmd_kanban_board(message: Message, state: FSMContext):
     if len(boards) == 1:
         b = boards[0]
         async with get_session() as session:
-            await set_active_board(session, message.chat.id, b["id"], b["title"])
+            await set_active_board(session, team.chat_id, b["id"], b["title"])
         await message.answer(
             f"✅ Активная доска: <b>{b['title']}</b>\n"
             "Все новые задачи будут создаваться сюда."
@@ -421,11 +464,12 @@ async def cb_set_board(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Ошибка: доска не найдена", show_alert=True)
         return
     board_id, board_name = boards[idx]
+    logger.info("Board selected via callback: chat=%s board_id=%s board_name=%s", callback.message.chat.id, board_id, board_name)
 
     async with get_session() as session:
-        team = await get_team_by_chat(session, callback.message.chat.id)
+        team = await get_team_for_event(session, callback)
         token = team.kanban_token if team else None
-        await set_active_board(session, callback.message.chat.id, board_id, board_name)
+        await set_active_board(session, team.chat_id if team else callback.message.chat.id, board_id, board_name)
 
     pending_tasks = data.get("pending_tasks")
 
@@ -475,7 +519,8 @@ async def process_board(message: Message, state: FSMContext):
     await state.clear()
 
     async with get_session() as session:
-        await set_active_board(session, message.chat.id, board_id, board_name)
+        team = await get_team_for_event(session, message)
+        await set_active_board(session, team.chat_id if team else message.chat.id, board_id, board_name)
 
     await message.answer(
         f"✅ Активная доска: <b>{board_name}</b>\n"
@@ -489,7 +534,7 @@ async def process_board(message: Message, state: FSMContext):
 @router.callback_query(F.data == "kanban:add")
 async def cb_kanban_add(callback: CallbackQuery, state: FSMContext):
     async with get_session() as session:
-        team = await get_team_by_chat(session, callback.message.chat.id)
+        team = await get_team_for_event(session, callback)
     if not team or not team.kanban_token or not team.kanban_board_id:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
@@ -654,7 +699,7 @@ async def cb_kanban_add_cancel(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "kanban:sync")
 async def cb_kanban_sync(callback: CallbackQuery):
     async with get_session() as session:
-        team = await get_team_by_chat(session, callback.message.chat.id)
+        team = await get_team_for_event(session, callback)
     if not team or not team.kanban_token or not team.kanban_board_id:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
@@ -684,7 +729,7 @@ async def cb_kanban_sync(callback: CallbackQuery):
 @router.callback_query(F.data == "kanban:stats")
 async def cb_kanban_stats(callback: CallbackQuery):
     async with get_session() as session:
-        team = await get_team_by_chat(session, callback.message.chat.id)
+        team = await get_team_for_event(session, callback)
     if not team or not team.kanban_token or not team.kanban_board_id:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
@@ -758,7 +803,7 @@ async def cb_kanban_change_board(callback: CallbackQuery, state: FSMContext):
         await callback.answer("⛔ Только владелец команды может менять доску", show_alert=True)
         return
     async with get_session() as session:
-        team = await get_team_by_chat(session, callback.message.chat.id)
+        team = await get_team_for_event(session, callback)
     if not team or not team.kanban_token:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
@@ -807,9 +852,9 @@ async def cb_kanban_choose_board(callback: CallbackQuery, state: FSMContext):
         return
 
     async with get_session() as session:
-        team = await get_team_by_chat(session, callback.message.chat.id)
+        team = await get_team_for_event(session, callback)
         token = team.kanban_token
-        await update_team_kanban(session, callback.message.chat.id, token, board["id"], "yougile")
+        await update_team_kanban(session, team.chat_id, token, board["id"], "yougile")
 
     client = YouGileClient(token, board["id"])
     text = await build_board_text(client, board["title"])
@@ -830,7 +875,9 @@ async def cb_kanban_relogin(callback: CallbackQuery):
         await callback.answer("⛔ Только владелец команды может менять настройки доски", show_alert=True)
         return
     async with get_session() as session:
-        await update_team_kanban(session, callback.message.chat.id, "", "", "")
+        team = await get_team_for_event(session, callback)
+        if team:
+            await update_team_kanban(session, team.chat_id, "", "", "")
 
     kb = InlineKeyboardBuilder()
     kb.row(InlineKeyboardButton(text="◀ Назад", callback_data="kanban:back_to_menu"))
@@ -868,7 +915,9 @@ async def cb_kanban_disconnect_yes(callback: CallbackQuery):
         await callback.answer("⛔ Только владелец команды может отключать доску", show_alert=True)
         return
     async with get_session() as session:
-        await update_team_kanban(session, callback.message.chat.id, "", "", "")
+        team = await get_team_for_event(session, callback)
+        if team:
+            await update_team_kanban(session, team.chat_id, "", "", "")
 
     await callback.message.edit_text(
         "✅ Канбан-доска отключена. Используй /kanban для повторного подключения."
@@ -879,7 +928,7 @@ async def cb_kanban_disconnect_yes(callback: CallbackQuery):
 @router.callback_query(F.data == "kanban:back_to_menu")
 async def cb_kanban_back_to_menu(callback: CallbackQuery):
     async with get_session() as session:
-        team = await get_team_by_chat(session, callback.message.chat.id)
+        team = await get_team_for_event(session, callback)
 
     is_owner = await is_team_owner(callback)
 
@@ -926,7 +975,7 @@ async def cb_kanban_tasks(callback: CallbackQuery):
     column_id = parts[2]
     page = int(parts[3]) if len(parts) > 3 else 0
     async with get_session() as session:
-        team = await get_team_by_chat(session, callback.message.chat.id)
+        team = await get_team_for_event(session, callback)
     if not team or not team.kanban_token:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
@@ -990,7 +1039,7 @@ async def cb_kanban_tasks(callback: CallbackQuery):
 async def cb_kanban_task(callback: CallbackQuery):
     task_id = callback.data.split(":", 2)[2]
     async with get_session() as session:
-        team = await get_team_by_chat(session, callback.message.chat.id)
+        team = await get_team_for_event(session, callback)
     if not team or not team.kanban_token:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
@@ -1043,7 +1092,7 @@ async def cb_kanban_task(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("kanban:rename:"))
 async def cb_kanban_rename(callback: CallbackQuery, state: FSMContext):
     async with get_session() as session:
-        team = await get_team_by_chat(session, callback.message.chat.id)
+        team = await get_team_for_event(session, callback)
     if not team or not team.kanban_token:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
@@ -1094,7 +1143,7 @@ async def process_rename(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("kanban:edit_desc:"))
 async def cb_kanban_edit_desc(callback: CallbackQuery, state: FSMContext):
     async with get_session() as session:
-        team = await get_team_by_chat(session, callback.message.chat.id)
+        team = await get_team_for_event(session, callback)
     if not team or not team.kanban_token:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
@@ -1147,7 +1196,7 @@ async def process_edit_desc(message: Message, state: FSMContext):
 async def cb_kanban_move(callback: CallbackQuery, state: FSMContext):
     task_id = callback.data.split(":", 2)[2]
     async with get_session() as session:
-        team = await get_team_by_chat(session, callback.message.chat.id)
+        team = await get_team_for_event(session, callback)
     if not team or not team.kanban_token:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
@@ -1243,7 +1292,7 @@ async def cb_kanban_delete_confirm(callback: CallbackQuery):
 async def cb_kanban_delete_ok(callback: CallbackQuery):
     task_id = callback.data.split(":", 2)[2]
     async with get_session() as session:
-        team = await get_team_by_chat(session, callback.message.chat.id)
+        team = await get_team_for_event(session, callback)
     if not team or not team.kanban_token:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
@@ -1271,7 +1320,7 @@ async def cb_kanban_delete_ok(callback: CallbackQuery):
 async def cb_kanban_add_to(callback: CallbackQuery, state: FSMContext):
     column_id = callback.data.split(":", 2)[2]
     async with get_session() as session:
-        team = await get_team_by_chat(session, callback.message.chat.id)
+        team = await get_team_for_event(session, callback)
     if not team or not team.kanban_token or not team.kanban_board_id:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
@@ -1296,7 +1345,7 @@ async def cb_kanban_add_to(callback: CallbackQuery, state: FSMContext):
 async def cb_kanban_assign(callback: CallbackQuery):
     task_id = callback.data.split(":", 2)[2]
     async with get_session() as session:
-        team = await get_team_by_chat(session, callback.message.chat.id)
+        team = await get_team_for_event(session, callback)
     if not team or not team.kanban_token:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
@@ -1352,7 +1401,7 @@ async def cb_kanban_assign_to(callback: CallbackQuery):
     tg_raw = parts[3]
 
     async with get_session() as session:
-        team = await get_team_by_chat(session, callback.message.chat.id)
+        team = await get_team_for_event(session, callback)
     if not team or not team.kanban_token:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
@@ -1429,7 +1478,7 @@ async def cb_kanban_link_user(callback: CallbackQuery):
     tg_id = int(parts[3])
 
     async with get_session() as session:
-        team = await get_team_by_chat(session, callback.message.chat.id)
+        team = await get_team_for_event(session, callback)
     if not team or not team.kanban_token:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
@@ -1478,7 +1527,7 @@ async def cb_kanban_link_confirm(callback: CallbackQuery):
     yg_user_id = parts[4]
 
     async with get_session() as session:
-        team = await get_team_by_chat(session, callback.message.chat.id)
+        team = await get_team_for_event(session, callback)
         if team:
             await set_team_member_yougile_id(session, team.id, tg_id, yg_user_id)
 
@@ -1509,7 +1558,7 @@ async def cb_kanban_link_confirm(callback: CallbackQuery):
 async def cb_kanban_deadline(callback: CallbackQuery, state: FSMContext):
     task_id = callback.data.split(":", 2)[2]
     async with get_session() as session:
-        team = await get_team_by_chat(session, callback.message.chat.id)
+        team = await get_team_for_event(session, callback)
     if not team or not team.kanban_token:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return

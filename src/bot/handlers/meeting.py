@@ -49,6 +49,7 @@ from src.core.meeting_processor import (
 from src.bot.states import MeetingStates
 from src.config import settings as app_settings
 from src.db.models import Team
+from src.userbot.manager import UserbotManager
 
 
 logger = logging.getLogger(__name__)
@@ -147,7 +148,7 @@ async def cb_meeting_back(callback: CallbackQuery):
 
 
 @router.message(F.audio | F.video | F.document | F.voice)
-async def handle_meeting_file(message: Message, state: FSMContext):
+async def handle_meeting_file(message: Message, state: FSMContext, userbot_manager: UserbotManager):
     media = message.audio or message.video or message.voice or message.document
     if media is None:
         return
@@ -175,9 +176,20 @@ async def handle_meeting_file(message: Message, state: FSMContext):
     notice = await message.answer("⏳ Получаю файл…")
     try:
         await message.bot.download(media.file_id, destination=str(target))
-    except Exception as e:
-        await notice.edit_text(f"❌ Не удалось скачать файл: {e}")
-        return
+    except Exception:
+        client = userbot_manager.get_client(message.from_user.id)
+        if client is None:
+            await notice.edit_text("❌ Слишком большой файл. Установите юзербота.")
+            return
+        try:
+            tg_msg = await client.get_messages(message.chat.id, ids=message.message_id)
+            if tg_msg is None:
+                await notice.edit_text("❌ Не удалось найти сообщение через юзербота.")
+                return
+            await tg_msg.download_media(file=str(target))
+        except Exception as e2:
+            await notice.edit_text(f"❌ Не удалось скачать файл: {e2}")
+            return
 
     async with get_session() as session:
         owner = await get_or_create_user(session, message.from_user.id)
@@ -243,14 +255,18 @@ async def cb_mtask_confirm(callback: CallbackQuery) -> None:
         payload = action.payload
         tasks = payload["tasks"]
         meeting_id = payload["meeting_id"]
-        team = await session.get(Team, payload["team_id"])
+        team_id = payload.get("team_id")
+        team = await session.get(Team, team_id) if team_id else None
         await delete_pending_action(session, action_id)
-    
+
     if not team or not team.kanban_token:
-        await callback.message.edit_text("❌ Канбан больше не подключён. Задачи не созданы.")
+        await callback.message.edit_text(
+            "⚠️ YouGile не подключён, задачи не созданы на доске.\n"
+            "Подключи интеграцию через /kanban и попробуй снова."
+        )
         await callback.answer()
         return
-    
+
     # Create tasks in YouGile
     created, failed, titles, board_name = await create_yougile_tasks_from_meeting(
         team, tasks, meeting_id, callback.message.chat.id, callback.bot
@@ -344,11 +360,15 @@ async def cb_mtask_create_selected(callback: CallbackQuery) -> None:
         payload = action.payload
         tasks = payload["tasks"]
         meeting_id = payload["meeting_id"]
-        team = await session.get(Team, payload["team_id"])
+        team_id = payload.get("team_id")
+        team = await session.get(Team, team_id) if team_id else None
         await delete_pending_action(session, action_id)
 
     if not team or not team.kanban_token:
-        await callback.message.edit_text("❌ Канбан больше не подключён. Задачи не созданы.")
+        await callback.message.edit_text(
+            "⚠️ YouGile не подключён, задачи не созданы на доске.\n"
+            "Подключи интеграцию через /kanban и попробуй снова."
+        )
         await callback.answer()
         return
 
