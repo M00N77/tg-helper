@@ -22,6 +22,7 @@ from src.db.models import (
     PendingAction,
     PendingInvite,
     PendingTeamTask,
+    TaskStatus,
     Blocker,
     EmailMessage,
     SociometryCache,
@@ -620,6 +621,30 @@ async def mark_team_task_failed(
         """),
         {"tid": task_id, "err": error_message},
     )
+
+
+async def update_pending_task_status(
+    session: AsyncSession,
+    task_id: int,
+    old_status: TaskStatus,
+    new_status: TaskStatus,
+) -> PendingTeamTask | None:
+    """Атомарная смена статуса с guard на old_status.
+    Возвращает обновлённую запись или None при race condition."""
+    result = await session.execute(
+        sql_text("""
+            UPDATE pending_team_tasks
+            SET status = :new_status, updated_at = NOW()
+            WHERE id = :tid AND status = :old_status
+            RETURNING id
+        """),
+        {"tid": task_id, "old_status": old_status.value, "new_status": new_status.value},
+    )
+    row = result.fetchone()
+    if row is None:
+        return None
+    await session.expire_all()
+    return await session.get(PendingTeamTask, row[0])
 
 
 async def list_news_topics(

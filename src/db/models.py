@@ -1,9 +1,12 @@
 from datetime import datetime
 
+import enum
+
 from sqlalchemy import (
     BigInteger,
     Boolean,
     DateTime,
+    Enum as SAEnum,
     Float,
     ForeignKey,
     Index,
@@ -259,6 +262,8 @@ class Team(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(128), default="")
     chat_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
+    is_supergroup: Mapped[bool] = mapped_column(Boolean, default=False)
+    thread_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, default=None)
     owner_telegram_id: Mapped[int] = mapped_column(BigInteger, default=0)
     kanban_token: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
     kanban_board_id: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -310,6 +315,13 @@ class TeamMember(Base):
     team: Mapped[Team] = relationship(back_populates="members")
 
 
+class TaskStatus(str, enum.Enum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
 class PendingTeamTask(Base):
     """Задача от участника команды, ожидающая подтверждения исполнителем."""
 
@@ -321,7 +333,12 @@ class PendingTeamTask(Base):
     assignee_telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
     title: Mapped[str] = mapped_column(String(256))
     description: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
-    status: Mapped[str] = mapped_column(String(16), default="pending")
+    status: Mapped[TaskStatus] = mapped_column(
+        SAEnum(TaskStatus, values_callable=lambda e: [m.value for m in e]),
+        default=TaskStatus.PENDING,
+        server_default=TaskStatus.PENDING.value,
+    )
+    telegram_trigger_id: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     yougile_task_id: Mapped[str | None] = mapped_column(String(128), nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
