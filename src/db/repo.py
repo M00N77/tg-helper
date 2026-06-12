@@ -22,6 +22,7 @@ from src.db.models import (
     PendingAction,
     PendingInvite,
     PendingTeamTask,
+    RolePermission,
     TaskStatus,
     Blocker,
     EmailMessage,
@@ -703,6 +704,7 @@ async def create_team(
     )
     session.add(team)
     await session.flush()
+    await init_default_permissions(session, team.id)
     return team
 
 
@@ -1611,3 +1613,51 @@ async def get_recent_risks(
         .limit(limit)
     )
     return list(result.scalars().all())
+
+
+async def get_role_permissions(
+    session: AsyncSession, team_id: int, role: str
+) -> dict:
+    result = await session.execute(
+        select(RolePermission).where(
+            RolePermission.team_id == team_id,
+            RolePermission.role == role,
+        )
+    )
+    rp = result.scalar_one_or_none()
+    if rp is None:
+        return {"allowed_intents": [], "denied_intents": []}
+    return {
+        "allowed_intents": rp.allowed_intents or [],
+        "denied_intents": rp.denied_intents or [],
+    }
+
+
+async def init_default_permissions(session: AsyncSession, team_id: int) -> None:
+    existing = await session.execute(
+        select(RolePermission).where(RolePermission.team_id == team_id)
+    )
+    if existing.scalar_one_or_none() is not None:
+        return
+
+    session.add(RolePermission(
+        team_id=team_id,
+        role="admin",
+        allowed_intents=["*"],
+        denied_intents=[],
+    ))
+    session.add(RolePermission(
+        team_id=team_id,
+        role="member",
+        allowed_intents=[
+            "chat", "smalltalk", "search",
+            "create_task_for", "show_my_tasks",
+            "summarize_chat", "join_meeting",
+        ],
+        denied_intents=[
+            "trash_task", "set_setting", "remove_news_topic",
+            "add_news_topic", "transfer_deadline", "change_assignee",
+            "close_task",
+        ],
+    ))
+    await session.flush()

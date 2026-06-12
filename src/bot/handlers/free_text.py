@@ -11,6 +11,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from src.bot.filters import OwnerOnly
 from src.config import settings as app_settings
+from src.core.auth import check_user_permission
 from src.core.agent import route_intent
 from src.core.chat_service import load_chat
 from src.core.commitment_extractor import extract_and_save_commitments
@@ -31,6 +32,7 @@ from src.db.repo import (
     get_contact,
     get_or_create_user,
     get_team_by_chat,
+    get_team_member,
     list_news_topics,
     list_open_commitments,
     list_trashed_commitments,
@@ -1082,7 +1084,21 @@ async def _dispatch(intent, message, state, userbot_manager, *, tz_name: str) ->
     if kind in ("join_meeting", "schedule_meeting", "meeting_summary"):
         await _exec_meeting_intent(intent, message)
         return
+    if not await _check_intent_perms(kind, message):
+        await message.answer("⛔ Доступ запрещён для вашей роли.")
+        return
     await _execute_intent(intent, message, state, userbot_manager, tz_name=tz_name)
+
+
+async def _check_intent_perms(kind: str, message: Message) -> bool:
+    async with get_session() as session:
+        team = await get_team_by_chat(session, message.chat.id)
+        if team is None:
+            return True
+        member = await get_team_member(session, team.id, message.from_user.id)
+        if member is None:
+            return True
+        return await check_user_permission(kind, member, session)
 
 
 async def _exec_meeting_intent(intent: dict, message: Message) -> None:

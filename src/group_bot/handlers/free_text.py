@@ -6,6 +6,7 @@ from aiogram.types import Message
 from sqlalchemy import select
 
 from src.config import settings as app_settings
+from src.core.auth import check_user_permission
 from src.core.agent import route_group_intent
 from src.core.sentiment import analyze_sentiment_and_risk
 from src.core.timeutil import now_in_tz
@@ -517,6 +518,12 @@ async def group_free_text(message: Message) -> None:
         return
 
     kind = intent.get("intent")
+
+    async with get_session() as check_session:
+        allowed = await check_user_permission(kind, member, check_session)
+    if not allowed:
+        await message.answer("⛔ Доступ запрещён для вашей роли.")
+        return
 
     if kind == "chat":
         reply = intent.get("reply", "")
