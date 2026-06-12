@@ -298,6 +298,9 @@ class Team(Base):
     risks: Mapped[list["MessageRisk"]] = relationship(
         back_populates="team", cascade="all, delete-orphan",
     )
+    role_permissions: Mapped[list["RolePermission"]] = relationship(
+        back_populates="team", cascade="all, delete-orphan",
+    )
 
 
 class TeamMember(Base):
@@ -545,6 +548,21 @@ class EmailMessage(Base):
     deadline_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     commitment_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     processed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class RolePermission(Base):
+    __tablename__ = "role_permissions"
+    __table_args__ = (
+        UniqueConstraint("team_id", "role", name="uq_role_per_team"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    role: Mapped[str] = mapped_column(String(32))
+    allowed_intents: Mapped[list] = mapped_column(JSON)
+    denied_intents: Mapped[list] = mapped_column(JSON)
+
+    team: Mapped["Team"] = relationship(back_populates="role_permissions")
 
 
 class MessageRisk(Base):
