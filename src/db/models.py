@@ -301,6 +301,9 @@ class Team(Base):
     role_permissions: Mapped[list["RolePermission"]] = relationship(
         back_populates="team", cascade="all, delete-orphan",
     )
+    dictionary_terms: Mapped[list["TeamDictionary"]] = relationship(
+        back_populates="team", cascade="all, delete-orphan",
+    )
 
 
 class TeamMember(Base):
@@ -499,9 +502,9 @@ class ActivitySession(Base):
 class ActivityResponse(Base):
     """Ответ участника на активность.
 
-    Анонимность: для is_anonymous-сессий user_id НЕ пишется (NULL), вместо него
+    Псевдонимизация: для анонимных сессий user_id НЕ пишется (NULL), вместо него
     хранится respondent_hash = HMAC(secret, telegram_id + session_id). Это даёт
-    дедупликацию «один человек — один голос» без хранения связи с личностью.
+    дедупликацию «один человек — один голос» без прямого хранения связи с личностью.
     """
 
     __tablename__ = "activity_responses"
@@ -563,6 +566,21 @@ class RolePermission(Base):
     denied_intents: Mapped[list] = mapped_column(JSON)
 
     team: Mapped["Team"] = relationship(back_populates="role_permissions")
+
+
+class TeamDictionary(Base):
+    __tablename__ = "team_dictionaries"
+    __table_args__ = (UniqueConstraint("team_id", "term", name="uq_team_dictionary_term"),)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    term: Mapped[str] = mapped_column(String(256))
+    definition: Mapped[str] = mapped_column(Text)
+    scope: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    team: Mapped["Team"] = relationship(back_populates="dictionary_terms")
 
 
 class MessageRisk(Base):

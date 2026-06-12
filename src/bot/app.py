@@ -11,6 +11,7 @@ from src.bot.handlers import (
     chat_cmd,
     digest_cmd,
     digest_evening_cmd,
+    dictionary as dictionary_handlers,
     free_text,
     kanban,
     kanban_analytics,
@@ -137,6 +138,7 @@ async def run_bot(userbot_manager: UserbotManager) -> None:
     dp.include_router(team_mood.router)
     dp.include_router(sentiment_stats.router)
     dp.include_router(tasks_rating.router)
+    dp.include_router(dictionary_handlers.router)
     dp.include_router(meeting.router)
     dp.include_router(team_handlers.router)
     dp.include_router(standup_handlers.router)

@@ -25,6 +25,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.types import InlineKeyboardButton
 
 from src.bot.filters import OwnerOrTeamMember
+from src.bot.states import DictStates
 from src.db.repo import (
     create_meeting,
     get_or_create_user,
@@ -149,6 +150,11 @@ async def cb_meeting_back(callback: CallbackQuery):
 
 @router.message(F.audio | F.video | F.document | F.voice)
 async def handle_meeting_file(message: Message, state: FSMContext, userbot_manager: UserbotManager):
+    # Если пользователь активно загружает словарь — не трогаем
+    current_state = await state.get_state()
+    if current_state == DictStates.waiting_for_file.state:
+        return
+
     media = message.audio or message.video or message.voice or message.document
     if media is None:
         return

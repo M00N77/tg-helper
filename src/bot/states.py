@@ -90,3 +90,8 @@ class OnboardingStates(StatesGroup):
 class YouGileSetupStates(StatesGroup):
     waiting_token = State()
     choosing_board = State()
+
+
+class DictStates(StatesGroup):
+    waiting_for_single_term = State()
+    waiting_for_file = State()
