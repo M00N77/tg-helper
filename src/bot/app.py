@@ -60,6 +60,9 @@ logger = logging.getLogger(__name__)
 debug_logger = logging.getLogger("debug.catch_all")
 debug_router = Router(name="debug_catch_all")
 
+# Cooldown: какие пользователи были уведомлены (user_id -> timestamp)
+_debug_notified: dict[int, float] = {}
+
 
 @debug_router.message()
 async def catch_all_debug(message: types.Message, state: FSMContext):
@@ -71,6 +74,24 @@ async def catch_all_debug(message: types.Message, state: FSMContext):
         message.from_user.id if message.from_user else None,
         current_state,
     )
+
+    uid = message.from_user.id if message.from_user else None
+    if (
+        uid
+        and current_state is None
+        and message.chat.type == "private"
+        and message.text
+        and not message.text.startswith("/")
+    ):
+        import time
+        now = time.time()
+        last = _debug_notified.get(uid, 0)
+        if now - last > 300:  # раз в 5 минут
+            _debug_notified[uid] = now
+            await message.answer(
+                "⚠️ Бот был перезапущен, и ваша предыдущая сессия сброшена.\n"
+                "Пожалуйста, вызовите нужную команду заново."
+            )
 
 _bot: Bot | None = None
 
