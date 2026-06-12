@@ -270,12 +270,14 @@ async def route_intent(
     heavy: bool = False,
     now_local: str | None = None,
     tz_name: str | None = None,
+    dictionary_block: str | None = None,
     history_block: str | None = None,
     notify_bot=None,
     notify_chat_id: int | None = None,
 ) -> dict[str, Any]:
     """now_local + tz_name инжектятся в системный промпт, чтобы LLM мог парсить
     относительные даты («завтра в 18:00») в корректный UTC ISO.
+    dictionary_block — найденные в тексте термины из словаря команды.
     history_block — краткосрочная память диалога владельца с ботом, чтобы понимать
     отсылки вроде «ему», «в том же чате»."""
     system = AGENT_SYSTEM
@@ -287,6 +289,8 @@ async def route_intent(
             f"Формат: «2026-06-09T10:00:00+03:00».\n\n"
             + system
         )
+    if dictionary_block:
+        system = dictionary_block + "\n\n" + system
     if history_block:
         system = system + "\n\n" + history_block
     raw = await llm_with_fallback(
@@ -369,6 +373,7 @@ async def route_group_intent(
     *,
     now_local: str | None = None,
     tz_name: str | None = None,
+    dictionary_block: str | None = None,
 ) -> dict[str, Any]:
     """LLM-роутер для группового чата команды: свободный текст участника →
     структурированный интент управления Канбан-доской.
@@ -385,6 +390,8 @@ async def route_group_intent(
             f"(например «2026-06-09T18:00:00+03:00»).\n\n"
             + system
         )
+    if dictionary_block:
+        system = dictionary_block + "\n\n" + system
     raw = await llm_with_fallback(
         providers,
         [

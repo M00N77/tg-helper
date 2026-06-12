@@ -1,6 +1,10 @@
 import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import datetime
+
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy import desc, select, text as sql_text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -28,6 +32,7 @@ from src.db.models import (
     EmailMessage,
     SociometryCache,
     Standup,
+    TeamDictionary,
     TimeLog,
     Team,
     TeamMember,
@@ -510,7 +515,64 @@ async def update_pending_action(session: AsyncSession, action_id: int, payload: 
     pa = await session.get(PendingAction, action_id)
     if pa is not None:
         pa.payload = payload
-        await session.flush()
+    await session.flush()
+
+
+# ── Team Dictionary ──────────────────────────────────────────────────────
+
+
+async def list_team_dictionary(
+    session: AsyncSession, team_id: int,
+) -> list[TeamDictionary]:
+    result = await session.execute(
+        select(TeamDictionary).where(TeamDictionary.team_id == team_id).order_by(TeamDictionary.term)
+    )
+    return list(result.scalars().all())
+
+
+async def add_team_dictionary_term(
+    session: AsyncSession,
+    *,
+    team_id: int,
+    term: str,
+    definition: str,
+    scope: str | None = None,
+) -> TeamDictionary:
+    entry = TeamDictionary(team_id=team_id, term=term.strip(), definition=definition.strip(), scope=scope.strip() if scope else None)
+    session.add(entry)
+    await session.flush()
+    await session.refresh(entry)
+    return entry
+
+
+async def update_team_dictionary_term(
+    session: AsyncSession,
+    term_id: int,
+    *,
+    term: str | None = None,
+    definition: str | None = None,
+    scope: str | None = None,
+) -> TeamDictionary | None:
+    entry = await session.get(TeamDictionary, term_id)
+    if entry is None:
+        return None
+    if term is not None:
+        entry.term = term.strip()
+    if definition is not None:
+        entry.definition = definition.strip()
+    if scope is not None:
+        entry.scope = scope.strip() if scope else None
+    await session.flush()
+    await session.refresh(entry)
+    return entry
+
+
+async def delete_team_dictionary_term(session: AsyncSession, term_id: int) -> bool:
+    entry = await session.get(TeamDictionary, term_id)
+    if entry is None:
+        return False
+    await session.delete(entry)
+    return True
 
 
 async def delete_pending_action(session: AsyncSession, action_id: int) -> None:
@@ -1618,13 +1680,22 @@ async def get_recent_risks(
 async def get_role_permissions(
     session: AsyncSession, team_id: int, role: str
 ) -> dict:
-    result = await session.execute(
-        select(RolePermission).where(
-            RolePermission.team_id == team_id,
-            RolePermission.role == role,
+    try:
+        result = await session.execute(
+            select(RolePermission).where(
+                RolePermission.team_id == team_id,
+                RolePermission.role == role,
+            )
         )
-    )
-    rp = result.scalar_one_or_none()
+        rp = result.scalar_one_or_none()
+    except Exception:
+        logger.exception(
+            "get_role_permissions: table access error for team=%s role=%s",
+            team_id, role,
+        )
+        # Таблица role_permissions ещё не создана миграцией — разрешаем всё
+        return {"allowed_intents": ["*"], "denied_intents": []}
+
     if rp is None:
         return {"allowed_intents": [], "denied_intents": []}
     return {

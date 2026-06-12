@@ -20,7 +20,7 @@
 ### 3. Пульс-опросы команды (`activities/scheduler.py`)
 - **Новый модуль** — `src/group_bot/activities/` с паттерном **Strategy/Plugin**
 - `activities_scheduler_loop` каждую минуту проверяет `team.pulse_time` → запускает `PulsePoll`
-- Анонимный опрос настроения (1-5), случайный вопрос-метафора
+- Псевдонимный опрос настроения (1-5, HMAC без прямого user_id), случайный вопрос-метафора
 - **Авто-закрытие:** после `pulse_auto_close_minutes` → итоги публикуются реплаем
 - Таблицы: `activity_sessions`, `activity_responses`
 - **Расширяемо:** новая активность = новый класс в `registry.py`, без правки scheduler/handler

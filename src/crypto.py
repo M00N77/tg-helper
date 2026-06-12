@@ -1,9 +1,12 @@
 import hashlib
 import hmac
+import logging
 
 from cryptography.fernet import Fernet, InvalidToken
 
 from src.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 _fernet = Fernet(settings.encryption_key.encode())
@@ -12,7 +15,7 @@ _HMAC_KEY = settings.encryption_key.encode()
 
 
 def respondent_hash(telegram_id: int, session_id: int) -> str:
-    """Стабильный анонимный идентификатор респондента в рамках одной сессии активности.
+    """Псевдонимный идентификатор респондента в рамках одной сессии активности.
 
     HMAC-SHA256 от (telegram_id, session_id) с секретом приложения. Один и тот же
     человек в одной сессии даёт один и тот же хеш (для дедупликации голосов),
@@ -43,4 +46,5 @@ def try_decrypt(value: str | None) -> str | None:
     try:
         return _fernet.decrypt(value.encode()).decode()
     except (InvalidToken, ValueError):
+        logger.warning("try_decrypt: InvalidToken для %s… Возможно, изменился ENCRYPTION_KEY в .env", str(value)[:30])
         return value
