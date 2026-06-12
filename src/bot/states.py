@@ -85,3 +85,8 @@ class TaskCreationStates(StatesGroup):
 
 class OnboardingStates(StatesGroup):
     waiting_display_name = State()
+
+
+class YouGileSetupStates(StatesGroup):
+    waiting_token = State()
+    choosing_board = State()

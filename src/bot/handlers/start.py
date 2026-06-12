@@ -1,16 +1,17 @@
 from aiogram import Router
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, ReplyKeyboardRemove
 
 from src.config import settings
 from src.bot.handlers.menu import cmd_menu
 from src.bot.lexicon import L
-from src.bot.states import OnboardingStates
+from src.bot.states import OnboardingStates, YouGileSetupStates
 from src.db.models import User
 from src.db.repo import (
     add_team_member, get_or_create_user,
     get_pending_invite, delete_pending_invite,
+    get_team_by_chat,
 )
 from src.db.session import get_session
 from src.userbot.manager import UserbotManager
@@ -20,10 +21,33 @@ router = Router(name="start")
 
 
 @router.message(Command("start", "help"))
-async def cmd_start(message: Message, userbot_manager: UserbotManager, state: FSMContext) -> None:
+async def cmd_start(message: Message, userbot_manager: UserbotManager, state: FSMContext, command: CommandObject | None = None) -> None:
     uid = message.from_user.id
     username = (message.from_user.username or "").lower()
     is_owner = uid == settings.owner_telegram_id
+
+    args = command.args.strip() if command and command.args else ""
+
+    if args.startswith("link_team_"):
+        chat_id_str = args.removeprefix("link_team_")
+        try:
+            chat_id = int(chat_id_str)
+        except (ValueError, TypeError):
+            await message.answer("❌ Некорректная ссылка.")
+            return
+        async with get_session() as session:
+            team = await get_team_by_chat(session, chat_id)
+        if team is None:
+            await message.answer("❌ Команда не найдена. Убедитесь, что группа зарегистрирована.")
+            return
+        await state.set_state(YouGileSetupStates.waiting_token)
+        await state.update_data(setup_chat_id=chat_id)
+        await message.answer(
+            f"🔗 Настройка канбана для команды «{team.name or chat_id}».\n\n"
+            "Отправьте ваш API-токен YouGile:\n"
+            "(YouGile → Настройки → API → создать ключ)",
+        )
+        return
 
     async with get_session() as session:
         user = await get_or_create_user(session, uid)
