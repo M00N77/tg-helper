@@ -28,6 +28,7 @@ from src.bot.handlers import (
     search,
     send,
     settings as settings_handlers,
+    setup_yougile,
     start,
     style_cmd,
     team as team_handlers,
@@ -107,6 +108,7 @@ async def run_bot(userbot_manager: UserbotManager) -> None:
     dp.include_router(news_cmd.router)
     dp.include_router(news_topics.router)
     dp.include_router(kanban.router)
+    dp.include_router(setup_yougile.router)
     dp.include_router(kanban_analytics.router)
     dp.include_router(dashboard.router)
     dp.include_router(weekly.router)

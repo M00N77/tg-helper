@@ -65,6 +65,48 @@ async def cmd_setup_kanban(message: Message, state: FSMContext):
     )
 
 
+@router.message(Command("setup_yougile"), GroupOnly())
+async def cmd_setup_yougile(message: Message):
+    """Создаёт deep-link кнопку для настройки YouGile в личке с ботом."""
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+
+    role = await get_role(chat_id, user_id)
+    if role != "admin":
+        if role == "none":
+            await message.answer("⛔ Команда не найдена в этом чате. Сначала выполните /i_am_director.")
+        else:
+            await message.answer("⛔ Только руководитель команды может настраивать канбан.")
+        return
+
+    async with get_session() as session:
+        team = await get_team_by_chat(session, chat_id)
+
+    if team is None:
+        await message.answer("❌ Команда не найдена. Используйте /i_am_director.")
+        return
+
+    if team.kanban_token and team.kanban_board_id:
+        await message.answer("📊 Канбан уже настроен и подключён.")
+        return
+
+    try:
+        me = await message.bot.get_me()
+        bot_username = me.username
+    except Exception:
+        bot_username = "ms_crop_bot"
+
+    link = f"https://t.me/{bot_username}?start=link_team_{chat_id}"
+
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="⚙️ Настроить YouGile", url=link))
+    await message.answer(
+        "🔗 Нажмите кнопку ниже, чтобы настроить YouGile в личном чате с ботом:\n\n"
+        "Токен и ID доски будут в безопасности.",
+        reply_markup=kb.as_markup(),
+    )
+
+
 @router.message(Command("kanban_token"), GroupOnly())
 async def cmd_kanban_token(message: Message, state: FSMContext):
     """Прямой ввод API-токена YouGile (без логина/пароля).
