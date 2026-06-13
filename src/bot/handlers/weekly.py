@@ -5,7 +5,7 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 from src.bot.filters import OwnerOrTeamMember
-from src.bot.handlers.yougile import YouGileClient
+from src.bot.handlers.yougile import YouGileClient, get_board_id
 from src.db.repo import get_team_by_chat, get_or_create_user, list_open_commitments
 from src.db.session import get_session
 
@@ -40,39 +40,43 @@ async def cmd_weekly(message: Message) -> None:
     lines.append("")
 
     # — Канбан
-    if team and team.kanban_token and team.kanban_board_id:
-        try:
-            client = YouGileClient(team.kanban_token, team.kanban_board_id)
-            columns = await client.get_columns()
+    if team and team.kanban_token:
+        board_id = get_board_id(team)
+        if not board_id:
+            lines.append("📊 Канбан: доска не выбрана\n")
+        else:
+            try:
+                client = YouGileClient(team.kanban_token, board_id)
+                columns = await client.get_columns()
 
-            new_this_week = 0
-            done_this_week = 0
-            in_progress = 0
+                new_this_week = 0
+                done_this_week = 0
+                in_progress = 0
 
-            for col in columns:
-                try:
-                    cards = await client.get_cards_in_column(col["id"], limit=100)
-                except Exception:
-                    cards = []
+                for col in columns:
+                    try:
+                        cards = await client.get_cards_in_column(col["id"], limit=100)
+                    except Exception:
+                        cards = []
 
-                col_title = col.get("title", "").lower()
-                for card in cards:
-                    ts = card.get("timestamp", 0)
-                    if ts >= week_ago:
-                        new_this_week += 1
-                    if "готов" in col_title or "done" in col_title or "closed" in col_title:
+                    col_title = col.get("title", "").lower()
+                    for card in cards:
+                        ts = card.get("timestamp", 0)
                         if ts >= week_ago:
-                            done_this_week += 1
-                    if "работ" in col_title or "progress" in col_title or "in progress" in col_title:
-                        in_progress += 1
+                            new_this_week += 1
+                        if "готов" in col_title or "done" in col_title or "closed" in col_title:
+                            if ts >= week_ago:
+                                done_this_week += 1
+                        if "работ" in col_title or "progress" in col_title or "in progress" in col_title:
+                            in_progress += 1
 
-            lines.append("📊 <b>Канбан за неделю:</b>")
-            lines.append(f"  🆕 Создано задач: {new_this_week}")
-            lines.append(f"  ✅ Закрыто: {done_this_week}")
-            lines.append(f"  🔄 В работе сейчас: {in_progress}")
-            lines.append("")
-        except Exception as e:
-            lines.append(f"📊 Канбан: ошибка ({e})\n")
+                lines.append("📊 <b>Канбан за неделю:</b>")
+                lines.append(f"  🆕 Создано задач: {new_this_week}")
+                lines.append(f"  ✅ Закрыто: {done_this_week}")
+                lines.append(f"  🔄 В работе сейчас: {in_progress}")
+                lines.append("")
+            except Exception as e:
+                lines.append(f"📊 Канбан: ошибка ({e})\n")
 
     # — Итог
     total = len(mine)

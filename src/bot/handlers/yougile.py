@@ -8,6 +8,11 @@ from typing import Dict, List, Optional
 from rapidfuzz import fuzz, process
 
 
+def get_board_id(team) -> str | None:
+    """Вернуть ID активной доски (active_board_id, затем kanban_board_id)."""
+    return team.active_board_id or team.kanban_board_id
+
+
 def _parse_deadline(s: str) -> dict:
     with_time = "T" in s
     dt = datetime.fromisoformat(s)
@@ -40,7 +45,7 @@ class YouGileClient:
     async def get_columns(self) -> List[Dict]:
         """Получить список колонок доски"""
         self._require_board()
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(trust_env=True, timeout=15.0) as client:
             response = await client.get(
                 f"{self.base_url}/columns",
                 headers=self.headers,
@@ -68,7 +73,7 @@ class YouGileClient:
         if deadline:
             payload["deadline"] = _parse_deadline(deadline)
         logging.warning(f"[YouGile][create_card] payload={payload}")
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(trust_env=True, timeout=15.0) as client:
             response = await client.post(
                 f"{self.base_url}/tasks",
                 headers=self.headers,
@@ -87,7 +92,7 @@ class YouGileClient:
         self._require_board()
         payload = {"columnId": column_id}
         logging.warning(f"[YouGile][move_card] PUT /tasks/{card_id} payload={payload}")
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(trust_env=True, timeout=15.0) as client:
             response = await client.put(
                 f"{self.base_url}/tasks/{card_id}",
                 headers=self.headers,
@@ -104,7 +109,7 @@ class YouGileClient:
     async def get_cards_in_column(self, column_id: str, limit: int = 50) -> List[Dict]:
         """Получить карточки в колонке"""
         self._require_board()
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(trust_env=True, timeout=15.0) as client:
             response = await client.get(
                 f"{self.base_url}/tasks",
                 headers=self.headers,
@@ -119,7 +124,7 @@ class YouGileClient:
         now = time.monotonic()
         if self._boards_cache is not None and (now - self._boards_cached_at) < self._BOARDS_CACHE_TTL:
             return self._boards_cache
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(trust_env=True, timeout=15.0) as client:
             response = await client.get(
                 f"{self.base_url}/boards",
                 headers=self.headers
@@ -147,7 +152,7 @@ class YouGileClient:
 
     async def get_users(self) -> list[dict]:
         """Получить список пользователей компании/проекта."""
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(trust_env=True, timeout=15.0) as client:
             response = await client.get(
                 f"{self.base_url}/users",
                 headers=self.headers,
@@ -161,7 +166,22 @@ class YouGileClient:
                 )
                 return []
             data = response.json()
-            return data.get("content", [])
+            raw_users = data.get("content", [])
+
+        normalized = []
+        for u in raw_users:
+            name = (
+                u.get("name")
+                or u.get("realName")
+                or (
+                    " ".join(filter(None, [u.get("firstName"), u.get("lastName")]))
+                    or None
+                )
+                or u.get("email", "")
+                or str(u.get("id", "?"))
+            )
+            normalized.append({**u, "name": name.strip()})
+        return normalized
 
     async def resolve_user_by_name(self, name: str) -> str | None:
         """Нечеткий поиск пользователя YouGile по имени. Возвращает user_id или None."""
@@ -178,7 +198,7 @@ class YouGileClient:
         """Обновить карточку"""
         self._require_board()
         logging.warning(f"[YouGile][update_card] PUT /tasks/{card_id} payload={kwargs}")
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(trust_env=True, timeout=15.0) as client:
             response = await client.put(
                 f"{self.base_url}/tasks/{card_id}",
                 headers=self.headers,
@@ -237,7 +257,7 @@ class YouGileClient:
         if not text:
             raise ValueError("comment text is empty")
         payload = {"text": text}
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(trust_env=True, timeout=15.0) as client:
             response = await client.post(
                 f"{self.base_url}/chats/{card_id}/messages",
                 headers=self.headers,
@@ -261,7 +281,7 @@ class YouGileClient:
     async def get_task(self, task_id: str) -> Dict:
         """Получить данные одной задачи"""
         self._require_board()
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(trust_env=True, timeout=15.0) as client:
             response = await client.get(
                 f"{self.base_url}/tasks/{task_id}",
                 headers=self.headers,
@@ -272,7 +292,7 @@ class YouGileClient:
     async def delete_task(self, task_id: str) -> None:
         """Удалить задачу"""
         self._require_board()
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(trust_env=True, timeout=15.0) as client:
             response = await client.delete(
                 f"{self.base_url}/tasks/{task_id}",
                 headers=self.headers,
@@ -286,7 +306,7 @@ class YouGileClient:
     async def generate_token(
         self, login: str, password: str, company_name: str
     ) -> str:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(trust_env=True, timeout=15.0) as client:
             response = await client.post(
                 f"{self.base_url}/auth/companies",
                 json={"login": login, "password": password}

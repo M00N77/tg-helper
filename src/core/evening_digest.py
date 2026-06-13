@@ -36,7 +36,7 @@ async def _get_tomorrow_commitments() -> list[Commitment]:
 
 
 async def _get_yougile_cards() -> list[dict]:
-    from src.bot.handlers.yougile import YouGileClient
+    from src.bot.handlers.yougile import YouGileClient, get_board_id
 
     async with get_session() as session:
         result = await session.execute(
@@ -54,7 +54,10 @@ async def _get_yougile_cards() -> list[dict]:
     cards: list[dict] = []
     for team in teams:
         try:
-            client = YouGileClient(team.kanban_token, team.kanban_board_id)
+            board_id = get_board_id(team)
+            if not board_id:
+                continue
+            client = YouGileClient(team.kanban_token, board_id)
             columns = await client.get_columns()
             for col in columns:
                 col_cards = await client.get_cards_in_column(col["id"], limit=100)

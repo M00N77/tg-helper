@@ -14,6 +14,12 @@ async def check_user_permission(
     member: TeamMember,
     session: AsyncSession,
 ) -> bool:
+    # Владелец команды (Team.owner_telegram_id) всегда имеет полный доступ
+    from src.db.models import Team
+    team = await session.get(Team, member.team_id)
+    if team is not None and team.owner_telegram_id == member.telegram_id:
+        return True
+
     perms = await get_role_permissions(session, member.team_id, member.role)
     allowed = perms.get("allowed_intents") or []
     denied = perms.get("denied_intents") or []

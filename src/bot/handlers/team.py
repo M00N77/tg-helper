@@ -7,13 +7,12 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from src.bot.filters import OwnerOrTeamMember, is_team_owner, get_team_for_event
 from src.bot.states import TeamStates
-from src.db.models import Team
+from src.db.models import Team, PendingInvite
 from src.db.repo import (
-    create_pending_invite, create_team, add_team_member, get_or_create_user,
+    create_team, add_team_member, get_or_create_user,
     get_team_by_chat, get_team_members, remove_team_member, get_user_teams,
 )
 from src.db.session import get_session
-
 
 router = Router(name="team")
 router.message.filter(OwnerOrTeamMember())
@@ -167,7 +166,10 @@ async def step_chat_id(message: Message, state: FSMContext):
 
 
 @router.message(TeamStates.waiting_invite_username)
-async def step_invite(message: Message, state: FSMContext):
+async def step_invite(
+    message: Message,
+    state: FSMContext,
+) -> None:
     username = message.text.strip().lstrip("@").lower()
     if not username:
         await message.answer("❌ Введите @username. Отмена — /cancel")
@@ -175,28 +177,48 @@ async def step_invite(message: Message, state: FSMContext):
 
     data = await state.get_data()
     team_id = data.get("team_id")
-
-    team_name = None
-    async with get_session() as session:
-        team = await session.get(Team, team_id)
-        if team:
-            team_name = team.name
-            await create_pending_invite(
-                session,
-                team_id=team_id,
-                username=username,
-                invited_by=message.from_user.id,
-            )
-
     await state.clear()
 
-    if not team_name:
+    if not team_id:
         await message.answer("❌ Команда не найдена.")
         return
 
+    username_clean = username.lstrip("@").strip().lower()
+    if not username_clean:
+        await message.answer("Некорректный username.")
+        return
+
+    async with get_session() as session:
+        team = await session.get(Team, team_id)
+        if not team:
+            await message.answer("❌ Команда не найдена.")
+            return
+
+        from sqlalchemy import select
+        existing = await session.execute(
+            select(PendingInvite).where(
+                PendingInvite.team_id == team.id,
+                PendingInvite.username == username_clean,
+            )
+        )
+        if existing.scalar_one_or_none():
+            await message.answer(
+                f"@{username_clean} уже приглашён в команду."
+            )
+            return
+
+        session.add(PendingInvite(
+            team_id=team.id,
+            username=username_clean,
+            invited_by=message.from_user.id,
+        ))
+        await session.commit()
+
+    bot_username = (await message.bot.get_me()).username
     await message.answer(
-        f"✅ Приглашение для @{username} сохранено.\n"
-        f"Когда он напишет боту /start — автоматически попадёт в «{team_name}»."
+        f"✅ Приглашение для @{username_clean} сохранено.\n\n"
+        f"Попроси его написать боту: @{bot_username}\n"
+        f"После первого сообщения он автоматически получит приглашение."
     )
 
 

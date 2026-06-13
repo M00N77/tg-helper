@@ -18,7 +18,7 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
 from src.bot.filters import OwnerOrTeamMember
-from src.bot.handlers.yougile import YouGileClient
+from src.bot.handlers.yougile import YouGileClient, get_board_id
 from src.db.repo import get_team_by_chat, get_team_members
 from src.db.session import get_session
 
@@ -57,7 +57,8 @@ async def cmd_tasks_rating(message: Message, command: CommandObject) -> None:
             return
         members = await get_team_members(session, team.id)
 
-    if not team.kanban_token or not team.kanban_board_id:
+    board_id = get_board_id(team)
+    if not team.kanban_token or not board_id:
         await wait.edit_text("📊 Канбан команды не настроен. Подключите доску через /setup_kanban.")
         return
 
@@ -68,7 +69,7 @@ async def cmd_tasks_rating(message: Message, command: CommandObject) -> None:
             name_by_yougile[m.yougile_user_id] = m.display_name or str(m.telegram_id)
 
     since_ms = NOW_MS() - days * 86400000
-    client = YouGileClient(team.kanban_token, team.kanban_board_id)
+    client = YouGileClient(team.kanban_token, board_id)
 
     try:
         columns = await client.get_columns()

@@ -45,6 +45,14 @@ def try_decrypt(value: str | None) -> str | None:
         return None
     try:
         return _fernet.decrypt(value.encode()).decode()
-    except (InvalidToken, ValueError):
-        logger.warning("try_decrypt: InvalidToken для %s… Возможно, изменился ENCRYPTION_KEY в .env", str(value)[:30])
+    except InvalidToken:
+        _truncated = str(value)[:40]
+        logger.warning(
+            "try_decrypt: InvalidToken для '%s…' — вероятно, изменился ENCRYPTION_KEY "
+            "в .env или данные повреждены. Возвращаю сырой текст (фоллбэк).",
+            _truncated,
+        )
+        return value
+    except ValueError:
+        logger.warning("try_decrypt: ValueError при декодинге '%s…' — возвращаю как есть.", str(value)[:40])
         return value

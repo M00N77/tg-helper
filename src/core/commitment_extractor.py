@@ -3,6 +3,7 @@ import json
 import logging
 from datetime import datetime
 
+from src.bot.handlers.yougile import get_board_id
 from src.core.chat_service import message_to_text
 from src.db.models import Contact, Message
 from src.db.repo import add_commitment
@@ -112,8 +113,11 @@ async def extract_and_save_commitments(
                     from src.bot.handlers.yougile import YouGileClient
                     async with get_session() as _ks:
                         team = await get_team_by_chat(_ks, chat_id)
-                    if team and team.kanban_token and team.kanban_board_id:
-                        _client = YouGileClient(team.kanban_token, team.kanban_board_id)
+                    if team and team.kanban_token:
+                        board_id = get_board_id(team)
+                        if not board_id:
+                            continue
+                        _client = YouGileClient(team.kanban_token, board_id)
                         columns = await _client.get_columns()
                         if columns:
                             col_id = columns[0]["id"]

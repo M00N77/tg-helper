@@ -18,6 +18,7 @@ from src.db.repo import (
     list_open_commitments,
     toggle_news_topic,
 )
+from src.bot.handlers.yougile import get_board_id
 from src.db.session import get_session
 from src.userbot.manager import UserbotManager
 
@@ -233,7 +234,8 @@ async def cb_menu_kanban(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer()
         return
 
-    if not team.kanban_board_id:
+    board_id = get_board_id(team) if team else None
+    if not board_id:
         text = breadcrumb("📊 Канбан") + "📊 Канбан — выбери доску для работы"
         kb = InlineKeyboardBuilder()
         kb.row(InlineKeyboardButton(text="📋 Выбрать доску", callback_data="menu:kanban:board"))
@@ -242,8 +244,8 @@ async def cb_menu_kanban(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer()
         return
 
-    from src.bot.handlers.yougile import YouGileClient
-    client = YouGileClient(team.kanban_token, team.kanban_board_id)
+    from src.bot.handlers.yougile import YouGileClient, get_board_id
+    client = YouGileClient(team.kanban_token, board_id)
     try:
         boards = await client.get_boards()
     except Exception as e:

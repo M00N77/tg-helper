@@ -20,7 +20,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from src.bot.filters import is_team_owner, get_team_for_event
 from src.bot.states import KanbanStates, KanbanAuthStates, KanbanCardStates
 
-from src.bot.handlers.yougile import YouGileClient, _parse_deadline
+from src.bot.handlers.yougile import YouGileClient, _parse_deadline, get_board_id
 from sqlalchemy import select
 from src.db.session import get_session
 from src.db.repo import (
@@ -196,7 +196,14 @@ async def step_kanban_token(message: Message, state: FSMContext):
     
     token = parts[0]
     board_id = parts[1]
-    
+
+    if len(board_id) < 10:
+        await message.answer(
+            "❌ Некорректный ID доски. Укажите полный UUID доски после двоеточия.\n"
+            "Формат: TOKEN:UUID_ДОСКИ"
+        )
+        return
+
     # Проверяем подключение
     client = YouGileClient(token, board_id)
     
@@ -233,19 +240,23 @@ async def cb_kanban_board(callback: CallbackQuery):
     async with get_session() as session:
         team = await get_team_for_event(session, callback)
 
+    board_id = get_board_id(team) if team else None
+
     logger.info(
-        "[DEBUG BOARD] chat_id=%s team=%s team.kanban_token=%s team.kanban_board_id=%s",
+        "[DEBUG BOARD] chat_id=%s team=%s team.kanban_token=%s board_id=%s",
         chat_id,
         team.id if team else None,
         team.kanban_token[:8] + "..." if team and team.kanban_token else None,
-        team.kanban_board_id if team else None,
+        board_id,
     )
 
     if not team or not team.kanban_token:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
 
-    if not team.kanban_board_id:
+    board_id = get_board_id(team)
+
+    if not board_id:
         logger.warning("[DEBUG BOARD] board_id is None for chat_id=%s, trying auto-setup", chat_id)
         try:
             client = YouGileClient(team.kanban_token)
@@ -260,7 +271,7 @@ async def cb_kanban_board(callback: CallbackQuery):
                     if team_db:
                         await update_team_kanban(session, team_db.chat_id, team.kanban_token, board["id"])
                 await callback.answer(f"✅ Автоматически привязана доска «{board['title']}»", show_alert=True)
-                team.kanban_board_id = board["id"]
+                board_id = board["id"]
             else:
                 await callback.answer("📋 Несколько досок. Используйте /kanban_board в ЛС бота.", show_alert=True)
                 return
@@ -271,7 +282,7 @@ async def cb_kanban_board(callback: CallbackQuery):
 
     await callback.answer()
 
-    client = YouGileClient(team.kanban_token, team.kanban_board_id)
+    client = YouGileClient(team.kanban_token, board_id)
     text = await build_board_text(client, "Канбан-доска")
 
     kb = InlineKeyboardBuilder()
@@ -390,6 +401,9 @@ async def cmd_kanban_board(message: Message, state: FSMContext):
     # Fallback: аргумент передан явно — сохраняем как активную доску
     if len(args) > 1:
         board_id = args[1].strip()
+        if len(board_id) < 10:
+            await message.answer("⚠️ Некорректный ID доски. Используй /kanban_board без аргумента для выбора из списка.")
+            return
         client = YouGileClient(team.kanban_token, board_id)
         try:
             boards = await client.get_boards()
@@ -535,12 +549,13 @@ async def process_board(message: Message, state: FSMContext):
 async def cb_kanban_add(callback: CallbackQuery, state: FSMContext):
     async with get_session() as session:
         team = await get_team_for_event(session, callback)
-    if not team or not team.kanban_token or not team.kanban_board_id:
+    board_id = get_board_id(team)
+    if not team or not team.kanban_token or not board_id:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
     await state.update_data(
         kanban_token=team.kanban_token,
-        kanban_board_id=team.kanban_board_id,
+        kanban_board_id=board_id,
     )
     await state.set_state(KanbanCardStates.waiting_title)
     kb = ReplyKeyboardMarkup(
@@ -700,11 +715,12 @@ async def cb_kanban_add_cancel(callback: CallbackQuery, state: FSMContext):
 async def cb_kanban_sync(callback: CallbackQuery):
     async with get_session() as session:
         team = await get_team_for_event(session, callback)
-    if not team or not team.kanban_token or not team.kanban_board_id:
+    board_id = get_board_id(team)
+    if not team or not team.kanban_token or not board_id:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
 
-    client = YouGileClient(team.kanban_token, team.kanban_board_id)
+    client = YouGileClient(team.kanban_token, board_id)
 
     try:
         text = await build_board_text(client, "Канбан-доска")
@@ -730,11 +746,12 @@ async def cb_kanban_sync(callback: CallbackQuery):
 async def cb_kanban_stats(callback: CallbackQuery):
     async with get_session() as session:
         team = await get_team_for_event(session, callback)
-    if not team or not team.kanban_token or not team.kanban_board_id:
+    board_id = get_board_id(team)
+    if not team or not team.kanban_token or not board_id:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
 
-    client = YouGileClient(team.kanban_token, team.kanban_board_id)
+    client = YouGileClient(team.kanban_token, board_id)
 
     try:
         columns = await client.get_columns()
@@ -804,609 +821,12 @@ async def cb_kanban_change_board(callback: CallbackQuery, state: FSMContext):
         return
     async with get_session() as session:
         team = await get_team_for_event(session, callback)
-    if not team or not team.kanban_token:
+    board_id = get_board_id(team)
+    if not team or not team.kanban_token or not board_id:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
 
-    client = YouGileClient(team.kanban_token, board_id="")
-
-    try:
-        boards = await client.get_boards()
-    except Exception as e:
-        await callback.message.edit_text(f"❌ Ошибка при получении досок: {e}")
-        await callback.answer()
-        return
-
-    if not boards:
-        await callback.message.edit_text(
-            "❌ Ошибка: В вашей компании не найдено досок "
-            "или у токена нет прав."
-        )
-        await callback.answer()
-        return
-
-    kb = InlineKeyboardBuilder()
-    for i, b in enumerate(boards):
-        kb.row(InlineKeyboardButton(text=b["title"], callback_data=f"kanban:choose:{i}"))
-    kb.row(InlineKeyboardButton(text="◀ Назад", callback_data="kanban:settings"))
-    kb.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="goto:main:confirm"))
-
-    await state.update_data(boards=boards)
-
-    await callback.message.edit_text("Выбери доску:", reply_markup=kb.as_markup())
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("kanban:choose:"))
-async def cb_kanban_choose_board(callback: CallbackQuery, state: FSMContext):
-    if not await is_team_owner(callback):
-        await callback.answer("⛔ Только владелец команды может менять доску", show_alert=True)
-        return
-    data = await state.get_data()
-    boards = data.get("boards", [])
-    try:
-        idx = int(callback.data.split(":")[2])
-        board = boards[idx]
-    except (IndexError, ValueError):
-        await callback.answer("Ошибка выбора доски", show_alert=True)
-        return
-
-    async with get_session() as session:
-        team = await get_team_for_event(session, callback)
-        token = team.kanban_token
-        await update_team_kanban(session, team.chat_id, token, board["id"], "yougile")
-
-    client = YouGileClient(token, board["id"])
-    text = await build_board_text(client, board["title"])
-
-    kb = InlineKeyboardBuilder()
-    kb.row(
-        InlineKeyboardButton(text="🔄 Обновить", callback_data="kanban:board"),
-        InlineKeyboardButton(text="➕ Добавить задачу", callback_data="kanban:add"),
-    )
-
-    await callback.message.edit_text(text, reply_markup=kb.as_markup())
-    await callback.answer()
-
-
-@router.callback_query(F.data == "kanban:relogin")
-async def cb_kanban_relogin(callback: CallbackQuery):
-    if not await is_team_owner(callback):
-        await callback.answer("⛔ Только владелец команды может менять настройки доски", show_alert=True)
-        return
-    async with get_session() as session:
-        team = await get_team_for_event(session, callback)
-        if team:
-            await update_team_kanban(session, team.chat_id, "", "", "")
-
-    kb = InlineKeyboardBuilder()
-    kb.row(InlineKeyboardButton(text="◀ Назад", callback_data="kanban:back_to_menu"))
-    kb.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="goto:main:confirm"))
-
-    await callback.message.edit_text(
-        "🔑 Токен сброшен. Используй /kanban_login для повторной авторизации.",
-        reply_markup=kb.as_markup(),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "kanban:disconnect")
-async def cb_kanban_disconnect(callback: CallbackQuery):
-    if not await is_team_owner(callback):
-        await callback.answer("⛔ Только владелец команды может отключать доску", show_alert=True)
-        return
-    kb = InlineKeyboardBuilder()
-    kb.row(
-        InlineKeyboardButton(text="✅ Да, отключить", callback_data="kanban:disconnect:yes"),
-        InlineKeyboardButton(text="❌ Нет", callback_data="kanban:settings"),
-    )
-
-    await callback.message.edit_text(
-        "❓ <b>Точно отключить канбан-доску?</b>\n\n"
-        "Все настройки будут сброшены.",
-        reply_markup=kb.as_markup(),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "kanban:disconnect:yes")
-async def cb_kanban_disconnect_yes(callback: CallbackQuery):
-    if not await is_team_owner(callback):
-        await callback.answer("⛔ Только владелец команды может отключать доску", show_alert=True)
-        return
-    async with get_session() as session:
-        team = await get_team_for_event(session, callback)
-        if team:
-            await update_team_kanban(session, team.chat_id, "", "", "")
-
-    await callback.message.edit_text(
-        "✅ Канбан-доска отключена. Используй /kanban для повторного подключения."
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "kanban:back_to_menu")
-async def cb_kanban_back_to_menu(callback: CallbackQuery):
-    async with get_session() as session:
-        team = await get_team_for_event(session, callback)
-
-    is_owner = await is_team_owner(callback)
-
-    kb = InlineKeyboardBuilder()
-    if not team or not team.kanban_token:
-        if is_owner:
-            kb.row(InlineKeyboardButton(text="🔌 Подключить доску", callback_data="kanban:setup"))
-    else:
-        kb.row(
-            InlineKeyboardButton(text="📊 Показать доску", callback_data="kanban:board"),
-            InlineKeyboardButton(text="➕ Создать задачу", callback_data="kanban:add"),
-        )
-        kb.row(
-            InlineKeyboardButton(text="🔄 Синхронизировать", callback_data="kanban:sync"),
-            InlineKeyboardButton(text="📈 Статистика", callback_data="kanban:stats"),
-        )
-        if is_owner:
-            kb.row(InlineKeyboardButton(text="⚙ Настройки", callback_data="kanban:settings"))
-
-    await callback.message.edit_text(
-        "📊 <b>Канбан-доска</b>\n\n"
-        "Бот автоматически:\n"
-        "✅ Создаёт карточки из задач в чате\n"
-        "✅ Назначает ответственных\n"
-        "✅ Отслеживает дедлайны\n"
-        "✅ Перемещает задачи по статусам\n\n"
-        "Поддерживается: YouGile",
-        reply_markup=kb.as_markup(),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data == "kanban:back")
-async def cb_kanban_back(callback: CallbackQuery):
-    await cb_kanban_back_to_menu(callback)
-
-
-# ── kanban:tasks — список задач колонки ──────────────────────────────────────
-
-
-@router.callback_query(F.data.startswith("kanban:tasks:"))
-async def cb_kanban_tasks(callback: CallbackQuery):
-    parts = callback.data.split(":")
-    column_id = parts[2]
-    page = int(parts[3]) if len(parts) > 3 else 0
-    async with get_session() as session:
-        team = await get_team_for_event(session, callback)
-    if not team or not team.kanban_token:
-        await callback.answer("Сначала настройте канбан-доску", show_alert=True)
-        return
-
-    client = YouGileClient(team.kanban_token, team.kanban_board_id)
-
-    try:
-        page_size = 10
-        all_cards = await client.get_cards_in_column(column_id, limit=100)
-        cards = all_cards[page * page_size:(page + 1) * page_size]
-        total_pages = (len(all_cards) + page_size - 1) // page_size
-        columns = await client.get_columns()
-    except Exception as e:
-        await callback.message.edit_text(f"❌ Ошибка при получении задач: {e}")
-        await callback.answer()
-        return
-
-    col_name = next((c.get("title", "?") for c in columns if c["id"] == column_id), "?")
-
-    boards = await client.get_boards()
-    board_title = next((b["title"] for b in boards if b["id"] == team.kanban_board_id), "Канбан-доска")
-    from src.bot.handlers.menu import breadcrumb
-
-    if not cards:
-        text = breadcrumb("📊", board_title, col_name) + f"📂 <b>{col_name}</b>\n\nКолонка пуста. Добавить задачу?"
-        kb = InlineKeyboardBuilder()
-        kb.row(InlineKeyboardButton(text="➕ Добавить в эту колонку", callback_data=f"kanban:add_to:{column_id}"))
-        kb.row(InlineKeyboardButton(text="◀ Назад к доске", callback_data="kanban:board"))
-        kb.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="goto:main:confirm"))
-        await callback.message.edit_text(text, reply_markup=kb.as_markup())
-        await callback.answer()
-        return
-
-    text = breadcrumb("📊", board_title, col_name) + f"📂 <b>{col_name}</b> ({len(cards)}):\n\n"
-    kb = InlineKeyboardBuilder()
-    for card in cards:
-        title = card.get("title", "?")[:30]
-        kb.row(InlineKeyboardButton(
-            text=f"📋 {title}",
-            callback_data=f"kanban:task:{card['id']}"
-        ))
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton(text="◀", callback_data=f"kanban:tasks:{column_id}:{page-1}"))
-    if page + 1 < total_pages:
-        nav.append(InlineKeyboardButton(text="▶", callback_data=f"kanban:tasks:{column_id}:{page+1}"))
-    if nav:
-        kb.row(*nav)
-    kb.row(InlineKeyboardButton(text="➕ Добавить в эту колонку", callback_data=f"kanban:add_to:{column_id}"))
-    kb.row(InlineKeyboardButton(text="◀ Назад к доске", callback_data="kanban:board"))
-    kb.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="goto:main:confirm"))
-
-    await callback.message.edit_text(text, reply_markup=kb.as_markup())
-    await callback.answer()
-
-
-# ── kanban:task — детальная карточка задачи ──────────────────────────────────
-
-
-@router.callback_query(F.data.startswith("kanban:task:"))
-async def cb_kanban_task(callback: CallbackQuery):
-    task_id = callback.data.split(":", 2)[2]
-    async with get_session() as session:
-        team = await get_team_for_event(session, callback)
-    if not team or not team.kanban_token:
-        await callback.answer("Сначала настройте канбан-доску", show_alert=True)
-        return
-
-    client = YouGileClient(team.kanban_token, team.kanban_board_id)
-
-    try:
-        task = await client.get_task(task_id)
-        columns = await client.get_columns()
-        users_raw = await client.get_users()
-    except Exception as e:
-        await callback.message.edit_text(f"❌ Ошибка при получении задачи: {e}")
-        await callback.answer()
-        return
-
-    users_dict = {u["id"]: u.get("name", u["id"][:8]) for u in users_raw}
-    column_id = task.get("columnId", "")
-    col_name = next((c.get("title", "?") for c in columns if c["id"] == column_id), "?")
-
-    boards = await client.get_boards()
-    board_title = next((b["title"] for b in boards if b["id"] == team.kanban_board_id), "Канбан-доска")
-    from src.bot.handlers.menu import breadcrumb
-
-    text = breadcrumb("📊", board_title, col_name, task.get("title", "?")[:20])
-    text += format_card_preview(task, col_name, users_dict)
-
-    kb = InlineKeyboardBuilder()
-    kb.row(
-        InlineKeyboardButton(text="✏️ Переименовать", callback_data=f"kanban:rename:{task_id}"),
-        InlineKeyboardButton(text="📝 Описание", callback_data=f"kanban:edit_desc:{task_id}"),
-    )
-    kb.row(
-        InlineKeyboardButton(text="👤 Назначить", callback_data=f"kanban:assign:{task_id}"),
-        InlineKeyboardButton(text="📅 Дедлайн", callback_data=f"kanban:deadline:{task_id}"),
-    )
-    kb.row(
-        InlineKeyboardButton(text="➡️ Переместить", callback_data=f"kanban:move:{task_id}"),
-        InlineKeyboardButton(text="🗑 Удалить", callback_data=f"kanban:delete:{task_id}"),
-    )
-    kb.row(InlineKeyboardButton(text="◀ Назад", callback_data=f"kanban:tasks:{column_id}"))
-    kb.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="goto:main:confirm"))
-
-    await callback.message.edit_text(text, reply_markup=kb.as_markup())
-    await callback.answer()
-
-
-# ── kanban:rename — FSM переименования ──────────────────────────────────────
-
-
-@router.callback_query(F.data.startswith("kanban:rename:"))
-async def cb_kanban_rename(callback: CallbackQuery, state: FSMContext):
-    async with get_session() as session:
-        team = await get_team_for_event(session, callback)
-    if not team or not team.kanban_token:
-        await callback.answer("Сначала настройте канбан-доску", show_alert=True)
-        return
-    task_id = callback.data.split(":", 2)[2]
-    await state.update_data(
-        kanban_task_id=task_id,
-        kanban_token=team.kanban_token,
-        kanban_board_id=team.kanban_board_id,
-    )
-    await state.set_state(KanbanCardStates.editing_title)
-    kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="❌ Отмена")]],
-        resize_keyboard=True,
-    )
-    await callback.message.answer("✏️ Введи новое название:", reply_markup=kb)
-    await callback.answer()
-
-
-@router.message(KanbanCardStates.editing_title)
-async def process_rename(message: Message, state: FSMContext):
-    if message.text == "❌ Отмена":
-        await state.clear()
-        await message.answer("Отменено.", reply_markup=ReplyKeyboardRemove())
-        return
-    data = await state.get_data()
-    task_id = data["kanban_task_id"]
-    token = data["kanban_token"]
-    board_id = data["kanban_board_id"]
-
-    client = YouGileClient(token, board_id)
-    try:
-        await client.update_card(task_id, title=message.text.strip())
-    except Exception as e:
-        await state.clear()
-        await message.answer(f"❌ Ошибка при переименовании: {e}", reply_markup=ReplyKeyboardRemove())
-        return
-
-    await state.clear()
-    await message.answer(
-        f"✅ Название обновлено: <b>{message.text.strip()}</b>",
-        reply_markup=ReplyKeyboardRemove(),
-    )
-
-
-# ── kanban:edit_desc — FSM изменения описания ────────────────────────────────
-
-
-@router.callback_query(F.data.startswith("kanban:edit_desc:"))
-async def cb_kanban_edit_desc(callback: CallbackQuery, state: FSMContext):
-    async with get_session() as session:
-        team = await get_team_for_event(session, callback)
-    if not team or not team.kanban_token:
-        await callback.answer("Сначала настройте канбан-доску", show_alert=True)
-        return
-    task_id = callback.data.split(":", 2)[2]
-    await state.update_data(
-        kanban_task_id=task_id,
-        kanban_token=team.kanban_token,
-        kanban_board_id=team.kanban_board_id,
-    )
-    await state.set_state(KanbanCardStates.editing_desc)
-    kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="❌ Отмена")]],
-        resize_keyboard=True,
-    )
-    await callback.message.answer(
-        "📝 Введи новое описание (или «-» чтобы очистить):",
-        reply_markup=kb,
-    )
-    await callback.answer()
-
-
-@router.message(KanbanCardStates.editing_desc)
-async def process_edit_desc(message: Message, state: FSMContext):
-    if message.text == "❌ Отмена":
-        await state.clear()
-        await message.answer("Отменено.", reply_markup=ReplyKeyboardRemove())
-        return
-    desc = "" if message.text == "-" else message.text.strip()
-    data = await state.get_data()
-    task_id = data["kanban_task_id"]
-    token = data["kanban_token"]
-    board_id = data["kanban_board_id"]
-
-    client = YouGileClient(token, board_id)
-    try:
-        await client.update_card(task_id, description=desc)
-    except Exception as e:
-        await state.clear()
-        await message.answer(f"❌ Ошибка при обновлении описания: {e}", reply_markup=ReplyKeyboardRemove())
-        return
-
-    await state.clear()
-    await message.answer("✅ Описание обновлено.", reply_markup=ReplyKeyboardRemove())
-
-
-# ── kanban:move — перемещение задачи ─────────────────────────────────────────
-
-
-@router.callback_query(F.data.startswith("kanban:move:"))
-async def cb_kanban_move(callback: CallbackQuery, state: FSMContext):
-    task_id = callback.data.split(":", 2)[2]
-    async with get_session() as session:
-        team = await get_team_for_event(session, callback)
-    if not team or not team.kanban_token:
-        await callback.answer("Сначала настройте канбан-доску", show_alert=True)
-        return
-
-    client = YouGileClient(team.kanban_token, team.kanban_board_id)
-
-    try:
-        task = await client.get_task(task_id)
-        columns = await client.get_columns()
-    except Exception as e:
-        await callback.message.edit_text(f"❌ Ошибка: {e}")
-        await callback.answer()
-        return
-
-    await state.update_data(
-        kanban_task_id=task_id,
-        kanban_token=team.kanban_token,
-        kanban_board_id=team.kanban_board_id,
-    )
-    await state.set_state(KanbanCardStates.moving_task)
-
-    current_column_id = task.get("columnId", "")
-    kb = InlineKeyboardBuilder()
-    for col in columns:
-        if col["id"] == current_column_id:
-            continue
-        kb.row(InlineKeyboardButton(
-            text=f"➡️ {col.get('title', '?')}",
-            callback_data=f"kanban:mvcol:{col['id']}"
-        ))
-    kb.row(InlineKeyboardButton(text="◀ Назад", callback_data=f"kanban:task:{task_id}"))
-    kb.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="goto:main:confirm"))
-
-    await callback.message.edit_text("Выбери новую колонку:", reply_markup=kb.as_markup())
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("kanban:mvcol:"))
-async def cb_kanban_mvcol(callback: CallbackQuery, state: FSMContext):
-    column_id = callback.data.split(":", 2)[2]
-
-    data = await state.get_data()
-    task_id = data.get("kanban_task_id")
-    token = data.get("kanban_token")
-    board_id = data.get("kanban_board_id")
-    if not task_id or not token or not board_id:
-        await callback.answer("❌ Данные утеряны, открой задачу заново", show_alert=True)
-        return
-
-    await state.clear()
-
-    client = YouGileClient(token, board_id)
-
-    try:
-        await client.move_card(task_id, column_id)
-    except Exception as e:
-        await callback.message.edit_text(f"❌ Ошибка при перемещении: {e}")
-        await callback.answer()
-        return
-
-    columns = await client.get_columns()
-    col_name = next((c.get("title", column_id) for c in columns if c["id"] == column_id), column_id)
-
-    kb = InlineKeyboardBuilder()
-    kb.row(InlineKeyboardButton(text="📊 Открыть доску", callback_data="kanban:board"))
-
-    await callback.message.edit_text(
-        f"✅ Задача перемещена в <b>{col_name}</b>",
-        reply_markup=kb.as_markup(),
-    )
-    await callback.answer()
-
-
-# ── kanban:delete — удаление задачи ──────────────────────────────────────────
-
-
-@router.callback_query(F.data.startswith("kanban:delete:"))
-async def cb_kanban_delete_confirm(callback: CallbackQuery):
-    task_id = callback.data.split(":", 2)[2]
-    kb = InlineKeyboardBuilder()
-    kb.row(
-        InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"kanban:delete_ok:{task_id}"),
-        InlineKeyboardButton(text="❌ Отмена", callback_data=f"kanban:task:{task_id}"),
-    )
-    await callback.message.edit_text(
-        "🗑 <b>Удалить задачу?</b>\n\nЭто действие необратимо.",
-        reply_markup=kb.as_markup(),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("kanban:delete_ok:"))
-async def cb_kanban_delete_ok(callback: CallbackQuery):
-    task_id = callback.data.split(":", 2)[2]
-    async with get_session() as session:
-        team = await get_team_for_event(session, callback)
-    if not team or not team.kanban_token:
-        await callback.answer("Сначала настройте канбан-доску", show_alert=True)
-        return
-
-    client = YouGileClient(team.kanban_token, team.kanban_board_id)
-
-    try:
-        await client.delete_task(task_id)
-    except Exception as e:
-        await callback.message.edit_text(f"❌ Ошибка при удалении: {e}")
-        await callback.answer()
-        return
-
-    kb = InlineKeyboardBuilder()
-    kb.row(InlineKeyboardButton(text="📊 Вернуться к доске", callback_data="kanban:board"))
-
-    await callback.message.edit_text("✅ Задача удалена.", reply_markup=kb.as_markup())
-    await callback.answer()
-
-
-# ── kanban:add_to — быстрое добавление в колонку ─────────────────────────────
-
-
-@router.callback_query(F.data.startswith("kanban:add_to:"))
-async def cb_kanban_add_to(callback: CallbackQuery, state: FSMContext):
-    column_id = callback.data.split(":", 2)[2]
-    async with get_session() as session:
-        team = await get_team_for_event(session, callback)
-    if not team or not team.kanban_token or not team.kanban_board_id:
-        await callback.answer("Сначала настройте канбан-доску", show_alert=True)
-        return
-    await state.update_data(
-        kanban_token=team.kanban_token,
-        kanban_board_id=team.kanban_board_id,
-        target_column_id=column_id,
-    )
-    await state.set_state(KanbanCardStates.waiting_title)
-    kb = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="❌ Отмена")]],
-        resize_keyboard=True,
-    )
-    await callback.message.answer("📝 Введи название задачи:", reply_markup=kb)
-    await callback.answer()
-
-
-# ── kanban:assign — назначение исполнителя ──────────────────────────────────
-
-
-@router.callback_query(F.data.startswith("kanban:assign:"))
-async def cb_kanban_assign(callback: CallbackQuery):
-    task_id = callback.data.split(":", 2)[2]
-    async with get_session() as session:
-        team = await get_team_for_event(session, callback)
-    if not team or not team.kanban_token:
-        await callback.answer("Сначала настройте канбан-доску", show_alert=True)
-        return
-
-    async with get_session() as session:
-        members = await get_team_members(session, team.id)
-    if not members:
-        await callback.message.edit_text(
-            "👤 <b>Назначение исполнителя</b>\n\n"
-            "В команде нет участников. Используй /team invite",
-        )
-        await callback.answer()
-        return
-
-    async with get_session() as session:
-        member_list = []
-        for m in members:
-            user = await get_or_create_user(session, m.telegram_id)
-            name = user.display_name or str(m.telegram_id)
-            member_list.append((m.telegram_id, name, m.role, m.yougile_user_id))
-
-    kb = InlineKeyboardBuilder()
-    for tg_id, name, role, yg_id in member_list:
-        icon = "👑 " if role == "admin" else ""
-        label = f"{icon}{name[:20]}"
-        if yg_id:
-            label += " ✅"
-        kb.row(InlineKeyboardButton(
-            text=label,
-            callback_data=f"kanban:assign_to:{task_id}:{tg_id}",
-        ))
-    kb.row(InlineKeyboardButton(
-        text="❌ Снять назначение",
-        callback_data=f"kanban:assign_to:{task_id}:none",
-    ))
-    kb.row(InlineKeyboardButton(
-        text="◀ Назад", callback_data=f"kanban:task:{task_id}",
-    ))
-
-    await callback.message.edit_text(
-        "👤 <b>Назначить исполнителя</b>\n\n"
-        "Выбери участника команды:"
-        "\n✅ — привязан к YouGile",
-        reply_markup=kb.as_markup(),
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("kanban:assign_to:"))
-async def cb_kanban_assign_to(callback: CallbackQuery):
-    parts = callback.data.split(":")
-    task_id = parts[2]
-    tg_raw = parts[3]
-
-    async with get_session() as session:
-        team = await get_team_for_event(session, callback)
-    if not team or not team.kanban_token:
-        await callback.answer("Сначала настройте канбан-доску", show_alert=True)
-        return
-
-    client = YouGileClient(team.kanban_token, team.kanban_board_id)
+    client = YouGileClient(team.kanban_token, board_id)
 
     try:
         if tg_raw == "none":
@@ -1479,11 +899,12 @@ async def cb_kanban_link_user(callback: CallbackQuery):
 
     async with get_session() as session:
         team = await get_team_for_event(session, callback)
-    if not team or not team.kanban_token:
+    board_id = get_board_id(team)
+    if not team or not team.kanban_token or not board_id:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
 
-    client = YouGileClient(team.kanban_token, team.kanban_board_id)
+    client = YouGileClient(team.kanban_token, board_id)
     try:
         yg_users = await client.get_users()
     except Exception as e:
@@ -1559,14 +980,15 @@ async def cb_kanban_deadline(callback: CallbackQuery, state: FSMContext):
     task_id = callback.data.split(":", 2)[2]
     async with get_session() as session:
         team = await get_team_for_event(session, callback)
-    if not team or not team.kanban_token:
+    board_id = get_board_id(team)
+    if not team or not team.kanban_token or not board_id:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
 
     await state.update_data(
         kanban_task_id=task_id,
         kanban_token=team.kanban_token,
-        kanban_board_id=team.kanban_board_id,
+        kanban_board_id=board_id,
     )
     await state.set_state(KanbanCardStates.setting_deadline)
     await callback.message.answer(

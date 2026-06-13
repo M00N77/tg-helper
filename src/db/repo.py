@@ -25,6 +25,7 @@ from src.db.models import (
     NewsTopic,
     PendingAction,
     PendingInvite,
+    PendingTask,
     PendingTeamTask,
     RolePermission,
     TaskStatus,
@@ -36,6 +37,7 @@ from src.db.models import (
     TimeLog,
     Team,
     TeamMember,
+    YouGileUserAlias,
     TelegramSession,
     TranscriptionCache,
     User,
@@ -537,12 +539,35 @@ async def add_team_dictionary_term(
     term: str,
     definition: str,
     scope: str | None = None,
-) -> TeamDictionary:
-    entry = TeamDictionary(team_id=team_id, term=term.strip(), definition=definition.strip(), scope=scope.strip() if scope else None)
-    session.add(entry)
+) -> bool:
+    """Добавляет или обновляет термин. Возвращает True если обновлён, False если создан."""
+    from src.db.models import TeamDictionary
+    from sqlalchemy import select
+
+    existing = await session.execute(
+        select(TeamDictionary).where(
+            TeamDictionary.team_id == team_id,
+            TeamDictionary.term == term,
+        )
+    )
+    row = existing.scalar_one_or_none()
+
+    if row is not None:
+        row.definition = definition.strip()
+        row.scope = scope.strip() if scope else None
+        row.updated_at = datetime.utcnow()
+        was_updated = True
+    else:
+        session.add(TeamDictionary(
+            team_id=team_id,
+            term=term.strip(),
+            definition=definition.strip(),
+            scope=scope.strip() if scope else None,
+        ))
+        was_updated = False
+
     await session.flush()
-    await session.refresh(entry)
-    return entry
+    return was_updated
 
 
 async def update_team_dictionary_term(
@@ -710,6 +735,62 @@ async def update_pending_task_status(
     return await session.get(PendingTeamTask, row[0])
 
 
+async def create_pending_task(
+    session: AsyncSession,
+    *,
+    team_id: int,
+    task_title: str,
+    task_description: str | None = None,
+) -> PendingTask:
+    pt = PendingTask(
+        team_id=team_id,
+        task_title=task_title,
+        task_description=task_description,
+    )
+    session.add(pt)
+    await session.flush()
+    return pt
+
+
+async def get_pending_task(
+    session: AsyncSession,
+    task_id: int,
+) -> PendingTask | None:
+    return await session.get(PendingTask, task_id)
+
+
+async def approve_pending_task(
+    session: AsyncSession,
+    task_id: int,
+) -> PendingTask | None:
+    result = await session.execute(
+        sql_text("""
+            UPDATE pending_tasks
+            SET status = 'approved'
+            WHERE id = :tid AND status = 'pending'
+            RETURNING id
+        """),
+        {"tid": task_id},
+    )
+    row = result.fetchone()
+    if row is None:
+        return None
+    await session.expire_all()
+    return await session.get(PendingTask, row[0])
+
+
+async def list_pending_tasks(
+    session: AsyncSession,
+    team_id: int,
+) -> list[PendingTask]:
+    query = select(PendingTask).where(
+        PendingTask.team_id == team_id,
+        PendingTask.status == "pending",
+    ).order_by(PendingTask.created_at.desc())
+    result = await session.execute(query)
+    return list(result.scalars().all())
+
+
 async def list_news_topics(
     session: AsyncSession,
     user: User,
@@ -806,6 +887,60 @@ async def get_team_by_owner(
         select(Team).where(Team.owner_telegram_id == owner_telegram_id)
     )
     return result.scalar_one_or_none()
+
+
+async def get_team_by_id(session: AsyncSession, team_id: int) -> Team | None:
+    return await session.get(Team, team_id)
+
+
+async def save_name_alias(
+    session: AsyncSession,
+    team_id: int,
+    alias: str,
+    yougile_user_id: str,
+    display_name: str,
+) -> None:
+    existing = await session.execute(
+        select(YouGileUserAlias).where(
+            YouGileUserAlias.team_id == team_id,
+            YouGileUserAlias.alias == alias.lower(),
+        )
+    )
+    row = existing.scalar_one_or_none()
+    if row:
+        row.yougile_user_id = yougile_user_id
+        row.display_name = display_name
+    else:
+        session.add(YouGileUserAlias(
+            team_id=team_id,
+            alias=alias.lower(),
+            yougile_user_id=yougile_user_id,
+            display_name=display_name,
+        ))
+
+
+async def resolve_alias(
+    session: AsyncSession,
+    team_id: int,
+    name: str,
+) -> str | None:
+    """Ищет yougile_user_id по алиасу (частичное совпадение)."""
+    result = await session.execute(
+        select(YouGileUserAlias).where(
+            YouGileUserAlias.team_id == team_id,
+        )
+    )
+    aliases = result.scalars().all()
+    name_lower = name.lower()
+    # Точное совпадение
+    for a in aliases:
+        if a.alias == name_lower:
+            return a.yougile_user_id
+    # Частичное совпадение
+    for a in aliases:
+        if name_lower in a.alias or a.alias in name_lower:
+            return a.yougile_user_id
+    return None
 
 
 async def add_team_member(

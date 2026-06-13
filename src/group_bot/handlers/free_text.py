@@ -27,36 +27,75 @@ from src.db.repo import (
 from src.db.session import get_session
 from src.group_bot.filters import GroupOnly
 from src.group_bot.permissions import is_admin
-from src.bot.handlers.yougile import YouGileClient
+from src.bot.handlers.yougile import YouGileClient, get_board_id
 from src.llm.router import get_provider_chain
+import json
+from aiogram.types import InlineKeyboardButton, CallbackQuery
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from src.db.repo import get_team_members
 
 logger = logging.getLogger(__name__)
+
+# Временное хранилище задач, ожидающих выбора исполнителя
+# ключ: message_id сообщения с кнопками, значение: dict с данными задачи
+_pending_task_selection: dict[int, dict] = {}
+
 router = Router(name="group_free_text")
 router.message.filter(GroupOnly())
 
 
 async def _create_kanban_task(
-    message: Message, team, title: str, description: str, deadline: str | None, target_member,
+    message: Message, team, title: str, description: str,
+    deadline: str | None, target_member,
 ) -> None:
-    if not team.kanban_token or not team.kanban_board_id:
+    board_id = get_board_id(team)
+    if not team.kanban_token or not board_id:
         await message.reply("📊 Канбан команды не настроен. Обратитесь к директору.")
         return
 
-    client = YouGileClient(team.kanban_token, team.kanban_board_id)
+    # Исполнитель не определён — показываем список участников
+    if target_member is None:
+        async with get_session() as session:
+            members = await get_team_members(session, team.id)
+
+        if not members:
+            await message.reply("❌ В команде нет участников.")
+            return
+
+        kb = InlineKeyboardBuilder()
+        for m in members:
+            label = m.display_name or str(m.telegram_id)
+            cb_data = f"pick_assignee:{m.telegram_id}"
+            kb.row(InlineKeyboardButton(text=label, callback_data=cb_data))
+        kb.row(InlineKeyboardButton(text="❌ Отмена", callback_data="pick_assignee:cancel"))
+
+        sent = await message.reply(
+            f"❓ Не нашёл исполнителя. Выберите из списка:\n"
+            f"📝 <b>{title}</b>",
+            reply_markup=kb.as_markup(),
+            parse_mode="HTML",
+        )
+        # Сохраняем данные задачи для callback-хендлера
+        _pending_task_selection[sent.message_id] = {
+            "team_id": team.id,
+            "title": title,
+            "description": description,
+            "deadline": deadline,
+        }
+        return
+
+    # Исполнитель найден — создаём задачу сразу
+    client = YouGileClient(team.kanban_token, board_id)
     try:
         columns = await client.get_columns()
         if not columns:
             await message.reply("❌ На доске нет колонок.")
             return
         column_id = columns[0]["id"]
-
-        assignee_ids = []
-        if target_member.yougile_user_id:
-            assignee_ids = [target_member.yougile_user_id]
-
+        assignee_ids = [target_member.yougile_user_id] if target_member.yougile_user_id else []
         await client.create_card(
             title, description, column_id,
-            assignee_ids=assignee_ids if assignee_ids else None,
+            assignee_ids=assignee_ids or None,
             deadline=deadline,
         )
     except Exception as e:
@@ -64,9 +103,102 @@ async def _create_kanban_task(
         await message.reply(f"❌ Ошибка при создании задачи: {e}")
         return
 
-    who = "себе" if target_member.telegram_id == message.from_user.id else f"<b>{target_member.display_name or target_member.telegram_id}</b>"
+    who = (
+        "себе"
+        if target_member.telegram_id == message.from_user.id
+        else f"<b>{target_member.display_name or target_member.telegram_id}</b>"
+    )
     tail = f"\n📅 Срок: {deadline[:10]}" if deadline else ""
-    await message.reply(f"✅ Задача «{title}» создана для {who}{tail}")
+    await message.reply(f"✅ Задача «{title}» создана для {who}{tail}", parse_mode="HTML")
+
+
+@router.callback_query(lambda c: c.data and c.data.startswith("pick_assignee:"))
+async def on_pick_assignee(callback: CallbackQuery) -> None:
+    await callback.answer()
+
+    value = callback.data.split(":", 1)[1]
+    msg_id = callback.message.message_id
+
+    if value == "cancel":
+        _pending_task_selection.pop(msg_id, None)
+        await callback.message.edit_text("❌ Создание задачи отменено.")
+        return
+
+    task_data = _pending_task_selection.pop(msg_id, None)
+    if not task_data:
+        await callback.message.edit_text("❌ Данные задачи устарели. Попробуйте снова.")
+        return
+
+    if not value.isdigit():
+        await callback.message.edit_text("❌ Неверный исполнитель.")
+        return
+
+    chosen_telegram_id = int(value)
+
+    async with get_session() as session:
+        from src.db.models import Team as TeamModel
+        team = await session.get(TeamModel, task_data["team_id"])
+        members = await get_team_members(session, task_data["team_id"])
+
+    if not team:
+        await callback.message.edit_text("❌ Команда не найдена.")
+        return
+
+    board_id = get_board_id(team)
+
+    target = next((m for m in members if m.telegram_id == chosen_telegram_id), None)
+    if not target:
+        await callback.message.edit_text("❌ Участник не найден.")
+        return
+
+    if not target.yougile_user_id:
+        try:
+            client = YouGileClient(team.kanban_token, board_id)
+            users = await client.get_users()
+        except Exception:
+            users = []
+
+        if users:
+            task_data["chosen_telegram_id"] = chosen_telegram_id
+            task_data["users"] = users
+            _pending_task_selection[msg_id] = task_data
+
+            from src.bot.handlers.free_text import _build_yougile_user_keyboard
+            kb = _build_yougile_user_keyboard(users, msg_id, prefix="yg_group")
+            await callback.message.edit_text(
+                f"👤 <b>{target.display_name or target.telegram_id}</b> выбран.\n"
+                f"Привяжи его к аккаунту YouGile:",
+                reply_markup=kb,
+                parse_mode="HTML",
+            )
+            return
+
+    client = YouGileClient(team.kanban_token, board_id)
+    try:
+        columns = await client.get_columns()
+        if not columns:
+            await callback.message.edit_text("❌ На доске нет колонок.")
+            return
+        column_id = columns[0]["id"]
+        assignee_ids = [target.yougile_user_id] if target.yougile_user_id else []
+        await client.create_card(
+            task_data["title"],
+            task_data["description"],
+            column_id,
+            assignee_ids=assignee_ids or None,
+            deadline=task_data["deadline"],
+        )
+    except Exception as e:
+        logger.exception("create_card failed in callback")
+        await callback.message.edit_text(f"❌ Ошибка при создании задачи: {e}")
+        return
+
+    name = target.display_name or str(target.telegram_id)
+    tail = f"\n📅 Срок: {task_data['deadline'][:10]}" if task_data.get("deadline") else ""
+    await callback.message.edit_text(
+        f"✅ Задача «{task_data['title']}» создана для <b>{name}</b>{tail}",
+        parse_mode="HTML",
+    )
 
 
 async def _request_approval(
@@ -151,11 +283,12 @@ async def _handle_create_task_for(message: Message, team, member, intent: dict) 
 
 
 async def _handle_show_my_tasks(message: Message, team, member) -> None:
-    if not team.kanban_token or not team.kanban_board_id:
+    board_id = get_board_id(team)
+    if not team.kanban_token or not board_id:
         await message.reply("📊 Канбан команды не настроен. Обратитесь к директору.")
         return
 
-    client = YouGileClient(team.kanban_token, team.kanban_board_id)
+    client = YouGileClient(team.kanban_token, board_id)
     try:
         columns = await client.get_columns()
     except Exception as e:
@@ -245,11 +378,12 @@ async def _handle_edit_task(message: Message, team, member, intent: dict) -> Non
         await message.reply("❓ Укажи, что изменить: новое название или описание.")
         return
 
-    if not team.kanban_token or not team.kanban_board_id:
+    board_id = get_board_id(team)
+    if not team.kanban_token or not board_id:
         await message.reply("📊 Канбан команды не настроен.")
         return
 
-    client = YouGileClient(team.kanban_token, team.kanban_board_id)
+    client = YouGileClient(team.kanban_token, board_id)
     task = await _find_task_by_title(client, title_hint)
     if not task:
         await message.reply(f"❓ Не нашёл задачу «{title_hint}» на доске.")
@@ -291,11 +425,12 @@ async def _handle_transfer_deadline(message: Message, team, member, intent: dict
         await message.reply("❓ Не понял, на какой срок перенести. Уточни дату.")
         return
 
-    if not team.kanban_token or not team.kanban_board_id:
+    board_id = get_board_id(team)
+    if not team.kanban_token or not board_id:
         await message.reply("📊 Канбан команды не настроен.")
         return
 
-    client = YouGileClient(team.kanban_token, team.kanban_board_id)
+    client = YouGileClient(team.kanban_token, board_id)
     task = await _find_task_by_title(client, title_hint)
     if not task:
         await message.reply(f"❓ Не нашёл задачу «{title_hint}» на доске.")
@@ -320,7 +455,11 @@ async def _handle_transfer_deadline(message: Message, team, member, intent: dict
 
 async def _handle_change_assignee(message: Message, team, member, intent: dict) -> None:
     title_hint = (intent.get("task_title_hint") or "").strip()
-    new_assignee_name = (intent.get("new_assignee_name") or "").strip()
+    new_assignee_name = (
+        intent.get("new_assignee_name")
+        or intent.get("assignee")
+        or ""
+    ).strip()
 
     if not title_hint:
         await message.reply("❓ Не понял, у какой задачи сменить ответственного. Уточни название.")
@@ -329,49 +468,71 @@ async def _handle_change_assignee(message: Message, team, member, intent: dict) 
         await message.reply("❓ Не понял, на кого переназначить. Уточни имя.")
         return
 
-    if not team.kanban_token or not team.kanban_board_id:
+    board_id = get_board_id(team)
+    if not team.kanban_token or not board_id:
         await message.reply("📊 Канбан команды не настроен.")
         return
 
-    async with get_session() as session:
-        target_member = await find_team_member_by_name(session, team.id, new_assignee_name)
-    if not target_member:
-        await message.reply(f"❓ Не нашёл участника «{new_assignee_name}» в команде.")
+    # Ищем исполнителя в YouGile (не в TeamMember)
+    client = YouGileClient(team.kanban_token, board_id)
+    try:
+        users = await client.get_users()
+    except Exception as e:
+        await message.reply(f"❌ Не удалось получить участников доски: {e}")
         return
 
-    client = YouGileClient(team.kanban_token, team.kanban_board_id)
+    if not users:
+        await message.reply("❌ На доске нет участников.")
+        return
+
+    new_assignee_query = new_assignee_name.lower()
+    matched_user = next(
+        (u for u in users
+         if new_assignee_query and new_assignee_query in u.get("name", "").lower()),
+        None
+    )
+
+    if not matched_user:
+        names = "\n".join(f"• {u.get('name', '?')}" for u in users[:15])
+        await message.reply(
+            f"❓ Участник «{new_assignee_name}» не найден на доске.\n\n"
+            f"<b>Участники доски:</b>\n{names}"
+        )
+        return
+
+    yougile_user_id = matched_user["id"]
+
+    # Проверка прав: админ делает без согласования
+    if member.role != "admin":
+        async with get_session() as session:
+            from src.db.repo import find_team_member_by_name
+            target_member = await find_team_member_by_name(session, team.id, new_assignee_name)
+
+        if target_member:
+            await _request_approval(
+                message, team,
+                title=title_hint,
+                description=f"Смена ответственного на {new_assignee_name}",
+                deadline=None,
+                target_member=target_member,
+                author=member,
+            )
+            return
+
     task = await _find_task_by_title(client, title_hint)
     if not task:
         await message.reply(f"❓ Не нашёл задачу «{title_hint}» на доске.")
         return
 
-    if member.role != "admin":
-        await _request_approval(
-            message, team,
-            title=task.get("title", title_hint),
-            description=f"Смена ответственного на {new_assignee_name}",
-            deadline=None,
-            target_member=target_member,
-            author=member,
-        )
-        return
-
-    if not target_member.yougile_user_id:
-        await message.reply(
-            f"❌ У {new_assignee_name} не привязан YouGile-аккаунт. "
-            "Используйте /link_yougile чтобы привязать."
-        )
-        return
-
     try:
-        await client.update_card(task["id"], assigned=[target_member.yougile_user_id])
+        await client.update_card(task["id"], assigned=[yougile_user_id])
     except Exception as e:
         logger.exception("change_assignee failed")
         await message.reply(f"❌ Ошибка при смене ответственного: {e}")
         return
 
     await message.reply(
-        f"✅ Задача «{task.get('title', '?')}» переназначена на <b>{target_member.display_name or new_assignee_name}</b>."
+        f"✅ Задача «{task.get('title', '?')}» переназначена на <b>{matched_user.get('name', new_assignee_name)}</b>."
     )
 
 
@@ -385,11 +546,12 @@ async def _handle_close_task(message: Message, team, member, intent: dict) -> No
         await message.reply("⛔ Только руководитель может закрыть задачу.")
         return
 
-    if not team.kanban_token or not team.kanban_board_id:
+    board_id = get_board_id(team)
+    if not team.kanban_token or not board_id:
         await message.reply("📊 Канбан команды не настроен.")
         return
 
-    client = YouGileClient(team.kanban_token, team.kanban_board_id)
+    client = YouGileClient(team.kanban_token, board_id)
     task = await _find_task_by_title(client, title_hint)
     if not task:
         await message.reply(f"❓ Не нашёл задачу «{title_hint}» на доске.")
@@ -426,11 +588,12 @@ async def _handle_comment_task(message: Message, team, member, intent: dict) -> 
         await message.reply("❓ Пустой комментарий. Напиши текст заметки.")
         return
 
-    if not team.kanban_token or not team.kanban_board_id:
+    board_id = get_board_id(team)
+    if not team.kanban_token or not board_id:
         await message.reply("📊 Канбан команды не настроен.")
         return
 
-    client = YouGileClient(team.kanban_token, team.kanban_board_id)
+    client = YouGileClient(team.kanban_token, board_id)
     task = await _find_task_by_title(client, title_hint)
     if not task:
         await message.reply(f"❓ Не нашёл задачу «{title_hint}» на доске.")
@@ -558,3 +721,172 @@ async def group_free_text(message: Message) -> None:
     if kind == "comment_task":
         await _handle_comment_task(message, team, member, intent)
         return
+
+    if kind == "notify_team":
+        notify_text = (
+            intent.get("message")
+            or intent.get("parameters", {}).get("message")
+            or ""
+        ).strip()
+        if not notify_text:
+            await message.reply("Укажи текст оповещения.")
+            return
+
+        try:
+            chat_members = []
+            async for cm in message.bot.get_chat_members(message.chat.id):
+                if not cm.user.is_bot and cm.user.id != message.from_user.id:
+                    name = cm.user.full_name or str(cm.user.id)
+                    chat_members.append(
+                        f'<a href="tg://user?id={cm.user.id}">{name}</a>'
+                    )
+            if chat_members:
+                mentions = chat_members
+            else:
+                mentions = []
+        except Exception:
+            async with get_session() as session:
+                from src.db.models import TeamMember, User
+                from sqlalchemy import select
+                result = await session.execute(
+                    select(TeamMember).where(TeamMember.team_id == team.id)
+                )
+                members_list = list(result.scalars().all())
+                mentions = []
+                for m in members_list:
+                    if m.telegram_id == message.from_user.id:
+                        continue
+                    user_result = await session.execute(
+                        select(User).where(User.telegram_id == m.telegram_id)
+                    )
+                    user = user_result.scalar_one_or_none()
+                    name = (
+                        getattr(m, "display_name", None)
+                        or (user.display_name if user else None)
+                        or str(m.telegram_id)
+                    )
+                    mentions.append(
+                        f'<a href="tg://user?id={m.telegram_id}">{name}</a>'
+                    )
+
+        if not mentions:
+            await message.reply(
+                f"📢 <b>Оповещение:</b>\n{notify_text}\n\n"
+                f"(Участников для тега не найдено)"
+            )
+            return
+
+        tags = " ".join(mentions)
+        await message.reply(
+            f"📢 <b>Оповещение для команды:</b>\n\n"
+            f"{notify_text}\n\n"
+            f"{tags}",
+            parse_mode="HTML",
+        )
+        return
+
+
+@router.callback_query(F.data.startswith("yg_group:"))
+async def cb_yg_group_assign(callback: CallbackQuery) -> None:
+    """Выбор YouGile-пользователя для привязки в групповом боте."""
+    parts = callback.data.split(":")
+    if len(parts) < 3:
+        await callback.answer("Ошибка данных.")
+        return
+
+    msg_id = int(parts[1])
+    yougile_user_id = parts[2] if parts[2] != "none" else None
+
+    task_data = _pending_task_selection.pop(msg_id, None)
+    if not task_data:
+        await callback.answer("Данные устарели.")
+        try:
+            await callback.message.edit_text("⏱ Время выбора истекло.")
+        except Exception:
+            pass
+        return
+
+    chosen_telegram_id = task_data.get("chosen_telegram_id")
+    team_id = task_data["team_id"]
+
+    async with get_session() as session:
+        from src.db.models import Team as TeamModel
+        team = await session.get(TeamModel, team_id)
+        members = await get_team_members(session, team_id)
+
+    if not team:
+        await callback.message.edit_text("❌ Команда не найдена.")
+        return
+
+    board_id = get_board_id(team)
+
+    target = next((m for m in members if m.telegram_id == chosen_telegram_id), None)
+
+    if yougile_user_id and target:
+        try:
+            async with get_session() as session:
+                from src.db.repo import set_team_member_yougile_id
+                await set_team_member_yougile_id(
+                    session, team_id, target.telegram_id, yougile_user_id
+                )
+        except Exception as e:
+            logger.warning("set_team_member_yougile_id failed: %s", e)
+
+    assignee_ids = [yougile_user_id] if yougile_user_id else []
+
+    try:
+        client = YouGileClient(team.kanban_token, board_id)
+        columns = await client.get_columns()
+        if not columns:
+            await callback.message.edit_text("❌ На доске нет колонок.")
+            return
+        column_id = columns[0]["id"]
+        await client.create_card(
+            task_data["title"],
+            task_data.get("description", ""),
+            column_id,
+            assignee_ids=assignee_ids or None,
+            deadline=task_data.get("deadline"),
+        )
+    except Exception as e:
+        logger.exception("create_card failed")
+        await callback.message.edit_text(f"❌ Ошибка при создании задачи: {e}")
+        return
+
+    name = target.display_name if target else str(chosen_telegram_id or "?")
+    assignee_display = "без исполнителя"
+    if yougile_user_id:
+        users = task_data.get("users", [])
+        matched = next((u for u in users if u.get("id") == yougile_user_id), None)
+        assignee_display = matched.get("name") if matched else yougile_user_id
+    tail = f"\n📅 Срок: {task_data['deadline'][:10]}" if task_data.get("deadline") else ""
+    await callback.message.edit_text(
+        f"✅ Задача «{task_data['title']}» создана для <b>{name}</b> ({assignee_display}){tail}",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("yg_group_page:"))
+async def cb_yg_group_page(callback: CallbackQuery) -> None:
+    parts = callback.data.split(":")
+    if len(parts) < 3:
+        await callback.answer()
+        return
+
+    msg_id = int(parts[1])
+    page = int(parts[2])
+
+    task_data = _pending_task_selection.get(msg_id)
+    if not task_data:
+        await callback.answer("Время выбора истекло.")
+        return
+
+    users = task_data.get("users", [])
+    from src.bot.handlers.free_text import _build_yougile_user_keyboard
+    kb = _build_yougile_user_keyboard(users, msg_id, page=page, page_size=8)
+    try:
+        await callback.message.edit_reply_markup(reply_markup=kb)
+    except Exception:
+        pass
+    await callback.answer()

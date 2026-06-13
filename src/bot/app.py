@@ -44,11 +44,13 @@ from src.group_bot.handlers import (
     link as group_link,
     risks as group_risks,
     setup_kanban as group_setup_kanban,
+    task_approval as group_task_approval,
     tasks as group_tasks,
 )
 from src.config import settings
 from src.core.notifier import notifier
 from src.bot.middlewares.invite_check import InviteCheckMiddleware
+from src.bot.middlewares.rbac import RBACMiddleware
 from src.userbot.manager import UserbotManager
 
 from src.services.ngrok_tunnel import start_tunnel, stop_tunnel
@@ -150,7 +152,11 @@ async def run_bot(userbot_manager: UserbotManager) -> None:
     dp.include_router(group_setup_kanban.router)
     dp.include_router(group_link.make_router())
     dp.include_router(group_risks.router)
+    dp.include_router(group_task_approval.router)
     dp.include_router(group_tasks.router)
+    # Пример прикручивания RBAC-проверки к конкретному роутеру:
+    #   group_setup_kanban.router.message.outer_middleware(RBACMiddleware("setup_kanban"))
+    #   group_tasks.router.callback_query.outer_middleware(RBACMiddleware("create_task"))
     dp.include_router(group_free_text.router)
     # ВАЖНО: free_text — самым последним, чтобы команды и FSM перехватили текст раньше
     dp.include_router(free_text.router)

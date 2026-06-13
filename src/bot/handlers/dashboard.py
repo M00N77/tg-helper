@@ -7,7 +7,7 @@ from aiogram.filters import Command
 from aiogram.types import Message
 
 from src.bot.filters import OwnerOrTeamMember
-from src.bot.handlers.yougile import YouGileClient
+from src.bot.handlers.yougile import YouGileClient, get_board_id
 from src.db.repo import (
     get_open_blockers,
     get_or_create_user,
@@ -96,9 +96,9 @@ async def cmd_pm_dashboard(message: Message) -> None:
     risk_cards = 0
     cycle_times = []
     throughput = 0
-    if team.kanban_token and team.kanban_board_id:
+    if team.kanban_token and get_board_id(team):
         try:
-            client = YouGileClient(team.kanban_token, team.kanban_board_id)
+            client = YouGileClient(team.kanban_token, get_board_id(team))
             columns = await client.get_columns()
             now_ms = NOW_MS()
             week_ms = int(week_ago.timestamp() * 1000)
@@ -173,9 +173,9 @@ async def cmd_dashboard(message: Message) -> None:
     lines.append(f"  Мои открытые: {len(mine)}")
     lines.append(f"  Ждут от других: {len(theirs)}\n")
 
-    if team and team.kanban_token and team.kanban_board_id:
+    if team and team.kanban_token and get_board_id(team):
         try:
-            client = YouGileClient(team.kanban_token, team.kanban_board_id)
+            client = YouGileClient(team.kanban_token, get_board_id(team))
             columns = await client.get_columns()
             now = NOW_MS()
             total = 0
