@@ -41,7 +41,7 @@ async def analyze_sentiment(text: str, provider) -> str | None:
         return None
     try:
         raw = await provider.chat(
-            [ChatMessage(role="user", content=SENTIMENT_PROMPT.format(text=text[:500]))],
+            [ChatMessage(role="user", content=SENTIMENT_PROMPT.format(text=text[:500].replace("{", "{{").replace("}", "}}")))],
             heavy=False,
         )
         label = raw.strip().lower().rstrip(".,!?")
@@ -59,7 +59,7 @@ async def analyze_sentiment_and_risk(
         return None
     try:
         raw = await provider.chat(
-            [ChatMessage(role="user", content=SENTIMENT_RISK_PROMPT.format(text=text[:500]))],
+            [ChatMessage(role="user", content=SENTIMENT_RISK_PROMPT.format(text=text[:500].replace("{", "{{").replace("}", "}}")))],
             heavy=False,
         )
         start = raw.find("{")

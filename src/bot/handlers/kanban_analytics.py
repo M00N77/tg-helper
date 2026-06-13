@@ -5,7 +5,7 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import Message
 
-from src.bot.handlers.yougile import YouGileClient
+from src.bot.handlers.yougile import YouGileClient, get_board_id
 from src.db.repo import get_team_by_chat, get_or_create_user
 from src.db.session import get_session
 from src.llm.base import ChatMessage
@@ -143,14 +143,15 @@ async def cmd_kanban_analytics(message: Message) -> None:
     async with get_session() as session:
         team = await get_team_by_chat(session, message.chat.id)
 
+    board_id = get_board_id(team)
     if not team or not team.kanban_token:
         await message.answer("❌ Сначала выполни /kanban_login")
         return
-    if not team.kanban_board_id:
+    if not board_id:
         await message.answer("❌ Сначала выбери доску /kanban_board")
         return
 
-    client = YouGileClient(team.kanban_token, team.kanban_board_id)
+    client = YouGileClient(team.kanban_token, board_id)
     try:
         columns = await client.get_columns()
     except Exception as e:

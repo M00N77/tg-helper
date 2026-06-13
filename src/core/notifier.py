@@ -33,5 +33,23 @@ class Notifier:
         except Exception:
             logger.exception("Failed to notify owner")
 
+    async def notify_user(
+        self, telegram_id: int, text: str, *, parse_mode: str | None = "HTML"
+    ) -> bool:
+        """Отправляет сообщение конкретному пользователю. Возвращает True при успехе."""
+        if self._bot is None:
+            logger.warning("Notifier not attached, cannot notify user %s", telegram_id)
+            return False
+        try:
+            await self._bot.send_message(
+                chat_id=telegram_id,
+                text=text,
+                parse_mode=parse_mode,
+            )
+            return True
+        except Exception:
+            logger.exception("Failed to notify user %s", telegram_id)
+            return False
+
 
 notifier = Notifier()

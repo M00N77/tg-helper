@@ -4,7 +4,7 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from src.bot.handlers.yougile import YouGileClient
+from src.bot.handlers.yougile import YouGileClient, get_board_id
 from src.db.repo import (
     confirm_pending_team_task,
     get_pending_team_task,
@@ -63,7 +63,8 @@ async def cb_task_confirm(callback: CallbackQuery) -> None:
             return
 
         columns = []
-        client = YouGileClient(team.kanban_token, team.kanban_board_id)
+        board_id = get_board_id(team)
+        client = YouGileClient(team.kanban_token, board_id)
         try:
             columns = await client.get_columns()
         except Exception as e:

@@ -7,7 +7,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from src.bot.handlers.yougile import YouGileClient
+from src.bot.handlers.yougile import YouGileClient, get_board_id
 from src.db.repo import get_team_by_chat, update_team_kanban
 from src.db.session import get_session
 from src.group_bot.filters import GroupOnly
@@ -86,7 +86,7 @@ async def cmd_setup_yougile(message: Message):
         await message.answer("❌ Команда не найдена. Используйте /i_am_director.")
         return
 
-    if team.kanban_token and team.kanban_board_id:
+    if team.kanban_token and get_board_id(team):
         await message.answer("📊 Канбан уже настроен и подключён.")
         return
 
@@ -307,7 +307,8 @@ async def cmd_kanban_board(message: Message):
         return
 
     # Без аргумента — показываем текущую доску
-    if not team.kanban_board_id:
+    board_id = get_board_id(team)
+    if not board_id:
         await message.answer(
             "📊 Канбан подключён, но доска не выбрана.\n\n"
             "Выберите доску в личке с ботом командой /kanban_board"
@@ -315,11 +316,11 @@ async def cmd_kanban_board(message: Message):
         return
 
     # Показываем информацию о текущей доске
-    client = YouGileClient(team.kanban_token, team.kanban_board_id)
+    client = YouGileClient(team.kanban_token, board_id)
     try:
         columns = await client.get_columns()
         text = f"📊 <b>Канбан-доска команды</b>\n\n"
-        text += f"Доска: {team.active_board_name or team.kanban_board_id}\n\n"
+        text += f"Доска: {team.active_board_name or board_id}\n\n"
         for col in columns:
             text += f"📋 {col.get('title', '?')}\n"
     except Exception as e:
@@ -352,8 +353,8 @@ async def cmd_kanban_status(message: Message):
         lines.append("• /kanban_board — выбор доски")
     else:
         lines.append("\n✅ Токен: подключён")
-        if team.kanban_board_id:
-            lines.append(f"✅ Доска: {team.active_board_name or team.kanban_board_id}")
+        if get_board_id(team):
+            lines.append(f"✅ Доска: {team.active_board_name or get_board_id(team)}")
         else:
             lines.append("⚠️ Доска: не выбрана")
             lines.append("\nВыберите доску в личке с ботом командой /kanban_board")

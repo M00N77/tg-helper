@@ -7,10 +7,9 @@ from src.config import settings
 from src.bot.handlers.menu import cmd_menu
 from src.bot.lexicon import L
 from src.bot.states import OnboardingStates, YouGileSetupStates
-from src.db.models import User
+from src.db.models import User, PendingInvite, TeamMember, Team
 from src.db.repo import (
-    add_team_member, get_or_create_user,
-    get_pending_invite, delete_pending_invite,
+    get_or_create_user,
     get_team_by_chat,
 )
 from src.db.session import get_session
@@ -66,16 +65,38 @@ async def cmd_start(message: Message, userbot_manager: UserbotManager, state: FS
                 return
 
         if username and not is_owner:
-            invite = await get_pending_invite(session, username)
-            if invite:
-                await add_team_member(
-                    session,
-                    team_id=invite.team_id,
-                    telegram_id=uid,
-                    role="member",
+            from sqlalchemy import select
+            invites = await session.execute(
+                select(PendingInvite).where(PendingInvite.username == username)
+            )
+            pending = invites.scalars().all()
+
+            team_names = []
+            for invite in pending:
+                existing = await session.execute(
+                    select(TeamMember).where(
+                        TeamMember.team_id == invite.team_id,
+                        TeamMember.telegram_id == uid,
+                    )
                 )
-                await delete_pending_invite(session, invite.id)
-                await message.answer(L.INVITE_ACCEPTED)
+                if not existing.scalar_one_or_none():
+                    session.add(TeamMember(
+                        team_id=invite.team_id,
+                        telegram_id=uid,
+                        role="member",
+                    ))
+                team = await session.get(Team, invite.team_id)
+                if team:
+                    team_names.append(team.name or f"команду {invite.team_id}")
+                await session.delete(invite)
+
+            if pending:
+                await session.commit()
+                await message.answer(
+                    f"👋 Добро пожаловать!\n"
+                    f"Ты добавлен в: {', '.join(team_names)}"
+                )
+                return
 
     if is_owner:
         await cmd_menu(message, userbot_manager)

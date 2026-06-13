@@ -289,20 +289,38 @@ async def step_dict_file(message: Message, state: FSMContext) -> None:
         return
 
     # Bulk-insert
+    added = 0
+    updated = 0
+    errors = 0
     async with get_session() as session:
         for item in parsed:
-            await add_team_dictionary_term(
-                session, team_id=team_id, term=item["term"], definition=item["definition"],
-            )
+            try:
+                was_updated = await add_team_dictionary_term(
+                    session, team_id=team_id, term=item["term"], definition=item["definition"],
+                )
+                if was_updated:
+                    updated += 1
+                else:
+                    added += 1
+            except Exception as e:
+                logger.warning("dictionary: failed to add term %r: %s", item["term"], e)
+                errors += 1
 
     dictionary_cache.invalidate_team_cache(team_id)
 
-    added = len(parsed)
     await state.clear()
+
+    parts = []
+    if added:
+        parts.append(f"✅ Добавлено: {added}")
+    if updated:
+        parts.append(f"🔄 Обновлено: {updated}")
+    if errors:
+        parts.append(f"❌ Ошибок: {errors}")
+
     await message.answer(
-        f"✅ <b>Готово!</b>\n\n"
-        f"• Добавлено терминов: <b>{added}</b>\n"
-        f"• Пропущено (неверный формат): <b>{skipped}</b>",
+        "📚 <b>Словарь обновлён</b>\n\n" + "\n".join(parts),
+        parse_mode="HTML",
     )
 
 

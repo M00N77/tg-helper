@@ -351,6 +351,37 @@ class PendingTeamTask(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class YouGileUserAlias(Base):
+    """Привязка имени/фамилии к YouGile user_id для быстрого поиска."""
+
+    __tablename__ = "yougile_user_aliases"
+    __table_args__ = (
+        UniqueConstraint("team_id", "alias", name="uq_yougile_alias"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(
+        ForeignKey("teams.id", ondelete="CASCADE"), index=True
+    )
+    alias: Mapped[str] = mapped_column(String(128))
+    yougile_user_id: Mapped[str] = mapped_column(String(128))
+    display_name: Mapped[str] = mapped_column(String(256))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class PendingTask(Base):
+    """Задача, извлечённая LLM, ожидающая подтверждения перед выгрузкой в канбан."""
+
+    __tablename__ = "pending_tasks"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    task_title: Mapped[str] = mapped_column(String(256))
+    task_description: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class PendingInvite(Base):
     __tablename__ = "pending_invites"
     __table_args__ = (
