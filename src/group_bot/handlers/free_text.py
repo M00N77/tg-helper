@@ -786,6 +786,122 @@ async def group_free_text(message: Message) -> None:
         return
 
 
+    if kind == "schedule_meeting":
+        title = (
+            intent.get("title")
+            or intent.get("parameters", {}).get("title")
+            or "Встреча"
+        )
+        datetime_str = (
+            intent.get("datetime")
+            or intent.get("parameters", {}).get("datetime")
+        )
+
+        async with get_session() as session:
+            team = await get_team_by_chat(session, message.chat.id)
+
+        # Получить mtslink_token
+        mtslink_token = None
+        if team:
+            try:
+                from src.crypto import decrypt
+                from src.db.models import ApiKey
+                from sqlalchemy import select
+                async with get_session() as session:
+                    result = await session.execute(
+                        select(ApiKey).where(ApiKey.provider == "mtslink")
+                    )
+                    key_row = result.scalar_one_or_none()
+                    if key_row:
+                        mtslink_token = decrypt(key_row.key_enc)
+            except Exception as e:
+                logger.warning("mtslink token fetch failed: %s", e)
+
+        try:
+            from src.services.meeting_room import create_meeting_room
+            url, event_id, session_id = await create_meeting_room(
+                title, mtslink_token, datetime_str,
+                team_chat_id=message.chat.id if mtslink_token else None,
+            )
+        except Exception as e:
+            await message.answer(f"❌ Не удалось создать встречу: {e}")
+            return
+
+        # Сохранить встречу в БД
+        if team:
+            from src.bot.handlers.meeting import detect_platform
+            platform = detect_platform(url)
+            async with get_session() as session:
+                from src.db.repo import create_meeting
+                await create_meeting(
+                    session, team.id, url, platform,
+                    mtslink_event_id=event_id,
+                    mtslink_session_id=session_id,
+                )
+
+        await message.answer(
+            f"📅 <b>Встреча создана</b>\n\n"
+            f"Название: <b>{title}</b>\n"
+            f"Ссылка: <code>{url}</code>\n\n"
+            f"Отправь эту ссылку участникам для подключения.",
+            parse_mode="HTML",
+        )
+        return
+
+    if kind == "start_pulse":
+        try:
+            from src.group_bot.handlers.pulse import start_pulse_survey
+            await start_pulse_survey(message)
+        except ImportError:
+            from aiogram.types import InlineKeyboardButton
+            from aiogram.utils.keyboard import InlineKeyboardBuilder
+            kb = InlineKeyboardBuilder()
+            kb.row(
+                InlineKeyboardButton(text="😊 Хорошо", callback_data="pulse:good"),
+                InlineKeyboardButton(text="😐 Нормально", callback_data="pulse:ok"),
+                InlineKeyboardButton(text="😟 Плохо", callback_data="pulse:bad"),
+            )
+            await message.answer(
+                "🔔 <b>Пульс-опрос команды</b>\n\n"
+                "Как твоё настроение сегодня?",
+                reply_markup=kb.as_markup(),
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.warning("start_pulse_survey failed: %s", e)
+            await message.answer(
+                "❌ Не удалось запустить опрос. Попробуй команду /pulse напрямую."
+            )
+        return
+
+    if kind == "show_pulse_results":
+        try:
+            from src.group_bot.handlers.pulse import show_pulse_results
+            await show_pulse_results(message)
+        except ImportError:
+            async with get_session() as session:
+                team = await get_team_by_chat(session, message.chat.id)
+                if not team:
+                    await message.answer("Команда не настроена.")
+                    return
+                from src.db.repo import get_recent_risks
+                risks = await get_recent_risks(session, team.id, limit=5)
+            if not risks:
+                await message.answer("📋 Данных пульс-опроса пока нет.")
+            else:
+                lines = ["📋 <b>Последние сигналы команды:</b>\n"]
+                for r in risks:
+                    lines.append(
+                        f"• {r.display_name}: {r.risk_reason} "
+                        f"<i>({r.created_at.strftime('%d.%m %H:%M')})</i>"
+                    )
+                await message.answer("\n".join(lines), parse_mode="HTML")
+        except Exception as e:
+            logger.warning("show_pulse_results failed: %s", e)
+            await message.answer("Используй /pulse results.")
+        return
+
+
 @router.callback_query(F.data.startswith("yg_group:"))
 async def cb_yg_group_assign(callback: CallbackQuery) -> None:
     """Выбор YouGile-пользователя для привязки в групповом боте."""
@@ -865,6 +981,19 @@ async def cb_yg_group_assign(callback: CallbackQuery) -> None:
         parse_mode="HTML",
     )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("pulse:"))
+async def cb_pulse_simple(callback: CallbackQuery) -> None:
+    value = callback.data.split(":", 1)[1] if ":" in callback.data else ""
+    labels = {"good": "😊 Хорошо", "ok": "😐 Нормально", "bad": "😟 Плохо"}
+    label = labels.get(value, value)
+    await callback.answer(f"Ты выбрал: {label}")
+    await callback.message.edit_text(
+        f"✅ Спасибо за ответ! Твой выбор: {label}\n\n"
+        f"Результаты опроса будут доступны позже.",
+        parse_mode="HTML",
+    )
 
 
 @router.callback_query(F.data.startswith("yg_group_page:"))
