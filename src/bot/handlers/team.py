@@ -10,7 +10,7 @@ from src.bot.states import TeamStates
 from src.db.models import Team, PendingInvite
 from src.db.repo import (
     create_team, add_team_member, get_or_create_user,
-    get_team_by_chat, get_team_members, remove_team_member, get_user_teams,
+    get_team_by_chat, get_team_by_id, get_team_members, remove_team_member, get_user_teams,
 )
 from src.db.session import get_session
 
@@ -19,16 +19,34 @@ router.message.filter(OwnerOrTeamMember())
 router.callback_query.filter(OwnerOrTeamMember())
 
 
+async def _resolve_team_for_user(session, message: Message) -> Team | list[Team] | None:
+    if message.chat.type in ("group", "supergroup"):
+        return await get_team_by_chat(session, message.chat.id)
+    teams = await get_user_teams(session, message.from_user.id)
+    if not teams:
+        return None
+    if len(teams) == 1:
+        return teams[0]
+    return teams
+
+
 @router.message(Command("team"))
 async def cmd_team(message: Message, state: FSMContext, command: CommandObject):
     args = (command.args or "").strip().lower()
 
     if args == "invite":
         async with get_session() as session:
-            team = await get_team_by_chat(session, message.chat.id)
-        if not team:
-            await message.answer("❌ Это не командный чат. Сначала /team → Создать.")
+            result = await _resolve_team_for_user(session, message)
+        if result is None:
+            await message.answer("❌ Вы не состоите ни в одной команде. Создайте её через /team")
             return
+        if isinstance(result, list):
+            kb = InlineKeyboardBuilder()
+            for t in result:
+                kb.row(InlineKeyboardButton(text=t.name, callback_data=f"team:select:{t.id}"))
+            await message.answer("📋 <b>Выберите команду для приглашения</b>", reply_markup=kb.as_markup())
+            return
+        team = result
         await state.update_data(team_id=team.id)
         await state.set_state(TeamStates.waiting_invite_username)
         await message.answer(
@@ -38,10 +56,18 @@ async def cmd_team(message: Message, state: FSMContext, command: CommandObject):
 
     if args == "members":
         async with get_session() as session:
-            team = await get_team_by_chat(session, message.chat.id)
-            if not team:
-                await message.answer("❌ Команда не найдена.")
-                return
+            result = await _resolve_team_for_user(session, message)
+        if result is None:
+            await message.answer("❌ Вы не состоите ни в одной команде. Создайте её через /team")
+            return
+        if isinstance(result, list):
+            kb = InlineKeyboardBuilder()
+            for t in result:
+                kb.row(InlineKeyboardButton(text=t.name, callback_data=f"team:select:{t.id}"))
+            await message.answer("📋 <b>Выберите команду</b>", reply_markup=kb.as_markup())
+            return
+        team = result
+        async with get_session() as session:
             members = await get_team_members(session, team.id)
         text = f"👥 <b>Участники «{team.name}»</b>\n\n"
         for m in members:
@@ -56,10 +82,21 @@ async def cmd_team(message: Message, state: FSMContext, command: CommandObject):
 
     # Основное меню (без args)
     async with get_session() as session:
-        team = await get_team_by_chat(session, message.chat.id)
+        result = await _resolve_team_for_user(session, message)
 
     kb = InlineKeyboardBuilder()
-    if team:
+    if result is None:
+        kb.row(
+            InlineKeyboardButton(text="➕ Создать команду", callback_data="team:create"),
+            InlineKeyboardButton(text="📋 Мои команды", callback_data="team:list"),
+        )
+    elif isinstance(result, list):
+        for t in result:
+            kb.row(InlineKeyboardButton(text=t.name, callback_data=f"team:select:{t.id}"))
+        await message.answer("📋 <b>Ваши команды</b>\n\nВыберите команду:", reply_markup=kb.as_markup())
+        return
+    else:
+        team = result
         kb.row(
             InlineKeyboardButton(text="👥 Участники", callback_data="team:members"),
             InlineKeyboardButton(text="➕ Пригласить", callback_data="team:invite"),
@@ -67,11 +104,6 @@ async def cmd_team(message: Message, state: FSMContext, command: CommandObject):
         kb.row(
             InlineKeyboardButton(text="📊 Канбан", callback_data="team:kanban"),
             InlineKeyboardButton(text="⚙ Настройки", callback_data="team:settings"),
-        )
-    else:
-        kb.row(
-            InlineKeyboardButton(text="➕ Создать команду", callback_data="team:create"),
-            InlineKeyboardButton(text="📋 Мои команды", callback_data="team:list"),
         )
     await message.answer(
         "🏢 <b>Управление командой</b>\n\n"
@@ -120,14 +152,24 @@ async def step_team_name(message: Message, state: FSMContext):
 
 @router.message(TeamStates.waiting_chat_id)
 async def step_chat_id(message: Message, state: FSMContext):
-    """Ввод ID чата или автоопределение"""
+    """Ввод ID чата"""
     data = await state.get_data()
-    team_name = data["team_name"]
+    team_name = data.get("team_name")
+    if not team_name:
+        await message.answer("❌ Ошибка: название команды не найдено. Начните заново — /team")
+        await state.clear()
+        return
+
+    text = (message.text or "").strip()
+    if not text:
+        await message.answer("Пришлите числовой ID чата текстом или /cancel")
+        return
 
     try:
-        chat_id = int(message.text.strip())
+        chat_id = int(text)
     except ValueError:
-        chat_id = message.chat.id
+        await message.answer("❌ Это не похоже на ID чата. Пришлите число (например -1001234567890) или /cancel")
+        return
 
     async with get_session() as session:
         team = await create_team(
@@ -395,6 +437,35 @@ async def cb_team_back(callback: CallbackQuery):
         "✅ Участвовать в встречах\n"
         "✅ Вести канбан-доску",
         reply_markup=kb.as_markup()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("team:select:"))
+async def cb_team_select(callback: CallbackQuery):
+    team_id = int(callback.data.split(":")[2])
+    async with get_session() as session:
+        team = await get_team_by_id(session, team_id)
+    if not team:
+        await callback.message.edit_text("❌ Команда не найдена")
+        await callback.answer()
+        return
+
+    kb = InlineKeyboardBuilder()
+    kb.row(
+        InlineKeyboardButton(text="👥 Участники", callback_data="team:members"),
+        InlineKeyboardButton(text="➕ Пригласить", callback_data="team:invite"),
+    )
+    kb.row(
+        InlineKeyboardButton(text="📊 Канбан", callback_data="team:kanban"),
+        InlineKeyboardButton(text="⚙ Настройки", callback_data="team:settings"),
+    )
+
+    await callback.message.edit_text(
+        f"🏢 <b>Управление командой «{team.name}»</b>\n\n"
+        "• /team invite — пригласить участника\n"
+        "• /team members — список участников",
+        reply_markup=kb.as_markup(),
     )
     await callback.answer()
 
