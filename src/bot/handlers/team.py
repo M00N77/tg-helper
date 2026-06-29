@@ -1,6 +1,6 @@
 """Управление командой: создание, приглашение участников, роли."""
 from aiogram import Router, F
-from aiogram.filters import Command, CommandObject
+from aiogram.filters import Command, CommandObject, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -40,7 +40,7 @@ async def _resolve_team_for_user(session, message: Message) -> Team | list[Team]
     return teams
 
 
-@router.message(Command("team"))
+@router.message(Command("team"), StateFilter(None))
 async def cmd_team(message: Message, state: FSMContext, command: CommandObject):
     args = (command.args or "").strip().lower()
 
