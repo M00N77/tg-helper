@@ -15,7 +15,6 @@ from telethon.tl.types import (
     UserStatusOnline,
 )
 
-from src.config import settings as app_settings
 from src.core.chat_service import load_chat, message_to_text
 from src.core.notifier import notifier
 from src.core.style_profile import style_profile_as_prompt_hint
@@ -85,6 +84,7 @@ async def _build_reply_text(
 ) -> str | None:
     async with get_session() as session:
         owner = await get_or_create_user(session, owner_telegram_id)
+        contact = await get_contact(session, owner, peer_id)
         providers = await get_provider_chain(session, owner)
         heavy = owner.settings.use_heavy_model
 

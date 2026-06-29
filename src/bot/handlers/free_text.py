@@ -826,7 +826,7 @@ async def _execute_intent(intent, message, state, userbot_manager, *, tz_name: s
         return
 
     if kind == "search":
-        query = (intent.get("query") or "").strip() or raw
+        query = (intent.get("query") or "").strip() or (message.text or "").strip()
         await message.answer(f"🔎 Ищу: <i>{query}</i>…")
         from src.bot.handlers.search import cmd_search
         from aiogram.filters import CommandObject

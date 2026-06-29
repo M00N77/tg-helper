@@ -50,7 +50,6 @@ from src.group_bot.handlers import (
 from src.config import settings
 from src.core.notifier import notifier
 from src.bot.middlewares.invite_check import InviteCheckMiddleware
-from src.bot.middlewares.rbac import RBACMiddleware
 from src.userbot.manager import UserbotManager
 
 from src.services.ngrok_tunnel import start_tunnel, stop_tunnel

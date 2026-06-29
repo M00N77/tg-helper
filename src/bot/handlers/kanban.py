@@ -828,6 +828,10 @@ async def cb_kanban_change_board(callback: CallbackQuery, state: FSMContext):
 
     client = YouGileClient(team.kanban_token, board_id)
 
+    parts = callback.data.split(":")
+    task_id = parts[2]
+    tg_raw = parts[3]
+
     try:
         if tg_raw == "none":
             await client.update_card(task_id, assigned=[])
@@ -903,8 +907,8 @@ async def cb_kanban_link_user(callback: CallbackQuery):
     if not team or not team.kanban_token or not board_id:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
-
     client = YouGileClient(team.kanban_token, board_id)
+
     try:
         yg_users = await client.get_users()
     except Exception as e:
