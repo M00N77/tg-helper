@@ -19,6 +19,16 @@ router.message.filter(OwnerOrTeamMember())
 router.callback_query.filter(OwnerOrTeamMember())
 
 
+@router.message(Command("cancel"))
+async def cmd_cancel(message: Message, state: FSMContext):
+    cur = await state.get_state()
+    if cur is None:
+        await message.answer("Нечего отменять.")
+        return
+    await state.clear()
+    await message.answer("❌ Действие отменено.")
+
+
 async def _resolve_team_for_user(session, message: Message) -> Team | list[Team] | None:
     if message.chat.type in ("group", "supergroup"):
         return await get_team_by_chat(session, message.chat.id)
