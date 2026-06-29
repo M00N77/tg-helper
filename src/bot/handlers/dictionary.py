@@ -15,7 +15,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from docx import Document as DocxDocument
 import openpyxl
 
-from src.bot.filters import get_team_for_event, OwnerOnly
+from src.bot.filters import get_team_for_event
 from src.bot.states import DictStates
 from src.core.dictionary_cache import dictionary_cache
 from src.db.repo import (

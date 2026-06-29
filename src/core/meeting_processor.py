@@ -2,6 +2,10 @@ import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from aiogram.types import InlineKeyboardMarkup
 
 from src.core.transcription import transcription_service
 from src.db.repo import (

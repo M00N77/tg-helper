@@ -59,7 +59,7 @@ async def cmd_pm_dashboard(message: Message) -> None:
         provider = await build_provider(session, owner)
 
     lines = [
-        f"📋 <b>Product Manager Dashboard</b>",
+        "📋 <b>Product Manager Dashboard</b>",
         f"🏢 {team.name or 'Команда'} · {today.strftime('%d.%m.%Y')}\n",
     ]
 
