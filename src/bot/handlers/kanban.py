@@ -814,7 +814,7 @@ async def cb_kanban_settings(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data == "kanban:change_board")
+@router.callback_query(F.data.startswith("kanban:change_board:"))
 async def cb_kanban_change_board(callback: CallbackQuery, state: FSMContext):
     if not await is_team_owner(callback):
         await callback.answer("⛔ Только владелец команды может менять доску", show_alert=True)
