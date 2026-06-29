@@ -139,9 +139,9 @@ async def cb_team_create(callback: CallbackQuery, state: FSMContext):
 @router.message(TeamStates.waiting_team_name)
 async def step_team_name(message: Message, state: FSMContext):
     """Ввод названия команды"""
-    name = message.text.strip()
-    if len(name) < 3:
-        await message.answer("❌ Название слишком короткое (минимум 3 символа)")
+    name = (message.text or "").strip()
+    if not name or len(name) < 3 or len(name) > 64:
+        await message.answer("❌ Название должно быть от 3 до 64 символов. Попробуйте ещё раз или /cancel")
         return
 
     await state.update_data(team_name=name)
