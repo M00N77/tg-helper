@@ -26,6 +26,7 @@ from src.db.session import get_session
 from src.db.repo import (
     set_active_board, update_team_kanban,
     get_team_members, get_or_create_user, set_team_member_yougile_id,
+    get_team_by_chat,
 )
 from src.db.models import TeamMember
 from src.userbot.manager import UserbotManager
@@ -254,15 +255,20 @@ async def process_password(message: Message, state: FSMContext):
     try:
         client = YouGileClient(api_token="", board_id="")
         token = await client.generate_token(login, password, "")
+        state_data = await state.get_data()
+        target_chat_id = state_data.get("setup_chat_id")
         async with get_session() as session:
-            team = await get_team_for_event(session, message)
-            await update_team_kanban(
-                session, team.chat_id if team else message.chat.id, token
+            if target_chat_id:
+                team = await get_team_by_chat(session, target_chat_id)
+            else:
+                team = await get_team_for_event(session, message)
+            save_chat_id = (
+                team.chat_id if team else (target_chat_id or message.chat.id)
             )
+            await update_team_kanban(session, save_chat_id, token)
         await wait_msg.edit_text(
-            f"✅ Авторизация успешна!\n"
-            f"Токен: <code>{token}</code>\n\n"
-            f"Теперь укажи ID доски командой /kanban_board"
+            "✅ Авторизация успешна.\n\n"
+            "Теперь выбери доску: /kanban_board"
         )
     except ValueError as e:
         await wait_msg.edit_text(f"❌ {e}")
