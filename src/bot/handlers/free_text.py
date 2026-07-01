@@ -1223,8 +1223,12 @@ async def free_voice(
     userbot_manager: UserbotManager,
 ) -> None:
     current_state = await state.get_state()
-    if current_state is not None and current_state != TaskCreationStates.waiting_for_board:
+    if current_state == TaskCreationStates.waiting_for_board:
+        # Голос в момент выбора доски — не наш путь, пусть его обработает другой хендлер
         return
+    if current_state is not None:
+        # Любое другое залипшее состояние сбрасываем, чтобы голос всё-таки обработался
+        await state.clear()
 
     media = message.voice or message.audio
     if media is None:
