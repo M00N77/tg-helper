@@ -194,6 +194,56 @@ async def cb_kanban_board(callback: CallbackQuery):
         pass
 
 
+@router.callback_query(F.data.startswith("kanban:tasks:"))
+async def cb_kanban_tasks(callback: CallbackQuery):
+    """Показать список карточек выбранной колонки."""
+    column_id = callback.data.split(":", 2)[2]
+    async with get_session() as session:
+        team = await get_team_for_event(session, callback)
+    if not team or not team.kanban_token:
+        await callback.answer("Сначала настройте канбан-доску", show_alert=True)
+        return
+    board_id = get_board_id(team)
+    if not board_id:
+        await callback.answer("Сначала выберите доску: /kanban_board", show_alert=True)
+        return
+
+    client = YouGileClient(team.kanban_token, board_id)
+    try:
+        columns = await client.get_columns()
+        cards = await client.get_cards_in_column(column_id)
+    except Exception as e:
+        await callback.answer(f"❌ Ошибка: {e}", show_alert=True)
+        return
+
+    col_name = next(
+        (c.get("title", "?") for c in columns if c["id"] == column_id),
+        "?",
+    )
+
+    lines = [f"📋 {col_name} ({len(cards)}):", ""]
+    if not cards:
+        lines.append("  — задач нет")
+    else:
+        for card in cards[:30]:
+            title = (card.get("title") or "").strip() or "(без названия)"
+            lines.append(f"  • {title[:80]}")
+        if len(cards) > 30:
+            lines.append(f"  … и ещё {len(cards) - 30}")
+
+    text = "\n".join(lines)
+
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="◀ К доске", callback_data="kanban:board"))
+    kb.row(InlineKeyboardButton(text="➕ Добавить задачу", callback_data="kanban:add"))
+
+    try:
+        await callback.message.edit_text(text, reply_markup=kb.as_markup())
+    except TelegramBadRequest:
+        pass
+    await callback.answer()
+
+
 @router.message(Command("kanban_login"), F.chat.type == "private")
 async def cmd_kanban_login(message: Message, state: FSMContext):
     from src.group_bot.permissions import get_role
