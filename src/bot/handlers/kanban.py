@@ -26,7 +26,7 @@ from src.db.session import get_session
 from src.db.repo import (
     set_active_board, update_team_kanban,
     get_team_members, get_or_create_user, set_team_member_yougile_id,
-    get_team_by_chat,
+    get_team_by_chat, get_team_by_owner,
 )
 from src.db.models import TeamMember
 from src.userbot.manager import UserbotManager
@@ -196,12 +196,27 @@ async def cb_kanban_board(callback: CallbackQuery):
 
 @router.message(Command("kanban_login"), F.chat.type == "private")
 async def cmd_kanban_login(message: Message, state: FSMContext):
-    if not await is_team_owner(message):
-        await message.answer("⛔ Только владелец команды может менять настройки доски")
+    from src.group_bot.permissions import get_role
+    from src.bot.filters import _get_chat_id  # noqa: F401
+
+    uid = message.from_user.id
+    async with get_session() as session:
+        team = await get_team_by_owner(session, uid)
+    if team is None:
+        await message.answer(
+            "❌ У тебя нет команды, которой ты владеешь или в которой ты админ.\n"
+            "Создай команду через /i_am_director в групповом чате, "
+            "либо запусти настройку из группы командой /setup_yougile."
+        )
+        return
+    role = await get_role(team.chat_id, uid)
+    if role not in ("owner", "admin"):
+        await message.answer("⛔ Только владелец или админ команды может настраивать доску.")
         return
     await state.set_state(KanbanAuthStates.waiting_login)
+    await state.update_data(setup_chat_id=team.chat_id)
     await message.answer(
-        "Введи логин от аккаунта YouGile:",
+        "Введи логин (email) от аккаунта YouGile:",
         reply_markup=ReplyKeyboardMarkup(
             keyboard=[[KeyboardButton(text="❌ Отмена")]],
             resize_keyboard=True,

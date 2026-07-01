@@ -11,7 +11,6 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from src.bot.filters import is_team_owner
 from src.bot.states import KanbanAuthStates
 from src.group_bot.permissions import get_role
 
@@ -22,8 +21,9 @@ router = Router(name="setup_yougile")
 @router.message(Command("setup_yougile"), F.chat.type.in_({"group", "supergroup"}))
 async def cmd_setup_yougile(message: Message) -> None:
     """В группе: выдаёт deep-link на приватный чат с ботом для входа по логину/паролю."""
-    if not await is_team_owner(message):
-        await message.answer("⛔ Только руководитель команды может настраивать канбан.")
+    role = await get_role(message.chat.id, message.from_user.id)
+    if role not in ("owner", "admin"):
+        await message.answer("⛔ Только руководитель или админ команды может настраивать канбан.")
         return
     bot_user = await message.bot.get_me()
     deep_link = f"https://t.me/{bot_user.username}?start=yougile_login_{message.chat.id}"
