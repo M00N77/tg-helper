@@ -18,7 +18,7 @@ from aiogram.types import (
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from src.bot.filters import is_team_owner, get_team_for_event
-from src.bot.states import KanbanStates, KanbanAuthStates, KanbanCardStates
+from src.bot.states import KanbanAuthStates, KanbanCardStates
 
 from src.bot.handlers.yougile import YouGileClient, _parse_deadline, get_board_id
 from sqlalchemy import select
@@ -97,7 +97,7 @@ async def cmd_kanban(message: Message):
     kb = InlineKeyboardBuilder()
     if not team or not team.kanban_token:
         if is_owner:
-            kb.row(InlineKeyboardButton(text="🔌 Подключить доску", callback_data="kanban:setup"))
+            kb.row(InlineKeyboardButton(text="🔑 Войти по логину и паролю YouGile", callback_data="menu:kanban:login"))
     else:
         kb.row(
             InlineKeyboardButton(text="📊 Показать доску", callback_data="kanban:board"),
@@ -119,117 +119,6 @@ async def cmd_kanban(message: Message):
         "✅ Перемещает задачи по статусам\n\n"
         "Поддерживается: YouGile",
         reply_markup=kb.as_markup()
-    )
-
-
-@router.callback_query(F.data == "kanban:setup")
-async def cb_kanban_setup(callback: CallbackQuery, state: FSMContext):
-    """Настройка подключения к канбан-доске"""
-    if not await is_team_owner(callback):
-        await callback.answer("⛔ Только владелец команды может подключать доску", show_alert=True)
-        return
-    kb = InlineKeyboardBuilder()
-    kb.row(
-        InlineKeyboardButton(text="📦 YouGile", callback_data="kanban:provider:yougile"),
-    )
-    kb.row(InlineKeyboardButton(text="◀ Назад", callback_data="kanban:back"))
-    kb.row(InlineKeyboardButton(text="🏠 Главное меню", callback_data="goto:main:confirm"))
-    
-    await callback.message.edit_text(
-        "🔌 <b>Выберите канбан-доску</b>\n\n"
-        "YouGile — российский сервис",
-        reply_markup=kb.as_markup()
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("kanban:provider:"))
-async def cb_kanban_provider(callback: CallbackQuery, state: FSMContext):
-    """Выбор провайдера и ввод токена"""
-    if not await is_team_owner(callback):
-        await callback.answer("⛔ Только владелец команды может подключать доску", show_alert=True)
-        return
-    provider = callback.data.split(":")[2]
-    
-    await state.update_data(kanban_provider=provider)
-    await state.set_state(KanbanStates.waiting_token)
-
-    instructions = (
-        "1. Перейдите в https://yougile.com\n"
-        "2. Создайте доску или откройте существующую\n"
-        "3. Настройки → API → Создать токен\n"
-        "4. Скопируйте токен"
-    )
-    
-    await callback.message.answer(
-        f"🔑 <b>Введите API токен для {provider}</b>\n\n"
-        f"{instructions}\n\n"
-        f"Формат: TOKEN:BOARD_ID\n"
-        f"Пример: your_token_here:board_id_here\n\n"
-        f"Отмена — /cancel"
-    )
-    await callback.answer()
-
-
-@router.message(KanbanStates.waiting_token)
-async def step_kanban_token(message: Message, state: FSMContext):
-    """Сохранение токена и настройка"""
-    if not await is_team_owner(message):
-        await message.answer("⛔ Только владелец команды может подключать доску")
-        await state.clear()
-        return
-    data = await state.get_data()
-    provider = data["kanban_provider"]
-    
-    try:
-        await message.delete()
-    except Exception:
-        pass
-
-    parts = message.text.strip().split(":")
-    if len(parts) < 2:
-        await message.answer(
-            "❌ Неправильный формат.\n"
-            "Используйте: TOKEN:BOARD_ID"
-        )
-        return
-    
-    token = parts[0]
-    board_id = parts[1]
-
-    if len(board_id) < 10:
-        await message.answer(
-            "❌ Некорректный ID доски. Укажите полный UUID доски после двоеточия.\n"
-            "Формат: TOKEN:UUID_ДОСКИ"
-        )
-        return
-
-    # Проверяем подключение
-    client = YouGileClient(token, board_id)
-    
-    try:
-        columns = await client.get_columns()
-        await message.answer(f"✅ Подключение успешно! Найдено колонок: {len(columns)}")
-    except Exception as e:
-        await message.answer(f"❌ Ошибка подключения: {e}")
-        return
-    
-    # Сохраняем в БД
-    async with get_session() as session:
-        team = await get_team_for_event(session, message)
-        if team:
-            await update_team_kanban(session, team.chat_id, token, board_id, provider)
-    
-    await state.clear()
-    
-    await message.answer(
-        f"🎉 <b>Канбан-доска подключена!</b>\n\n"
-        f"Провайдер: {provider}\n"
-        f"ID доски: {board_id}\n\n"
-        f"Теперь бот будет автоматически:\n"
-        f"• Создавать карточки из задач в чате\n"
-        f"• Назначать ответственных\n"
-        f"• Обновлять статусы"
     )
 
 
