@@ -244,7 +244,7 @@ async def cb_menu_kanban(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer()
         return
 
-    from src.bot.handlers.yougile import YouGileClient, get_board_id
+    from src.bot.handlers.yougile import YouGileClient
     client = YouGileClient(team.kanban_token, board_id)
     try:
         boards = await client.get_boards()
