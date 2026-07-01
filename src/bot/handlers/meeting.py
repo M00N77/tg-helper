@@ -148,7 +148,7 @@ async def cb_meeting_back(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.message(F.audio | F.video | F.document | F.voice)
+@router.message(F.audio | F.video | F.document)
 async def handle_meeting_file(message: Message, state: FSMContext, userbot_manager: UserbotManager):
     # Если пользователь активно загружает словарь — не трогаем
     current_state = await state.get_state()
@@ -200,10 +200,6 @@ async def handle_meeting_file(message: Message, state: FSMContext, userbot_manag
     async with get_session() as session:
         owner = await get_or_create_user(session, message.from_user.id)
         team = await get_team_by_chat(session, message.chat.id)
-
-    # Voice messages outside team chat → let free_text handler process them
-    if message.voice and not team:
-        return
 
     meeting_id = None
     if team:
