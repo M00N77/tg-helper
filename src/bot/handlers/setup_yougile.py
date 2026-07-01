@@ -1,111 +1,50 @@
 import logging
 
 from aiogram import F, Router
+from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
+from aiogram.types import (
+    InlineKeyboardButton,
+    KeyboardButton,
+    Message,
+    ReplyKeyboardMarkup,
+)
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from src.bot.handlers.yougile import YouGileClient
-from src.bot.states import YouGileSetupStates
-from src.db.repo import get_team_by_chat, update_team_kanban
-from src.db.session import get_session
+from src.bot.filters import is_team_owner
+from src.bot.states import KanbanAuthStates
 from src.group_bot.permissions import get_role
 
 logger = logging.getLogger(__name__)
 router = Router(name="setup_yougile")
 
 
-@router.message(YouGileSetupStates.waiting_token)
-async def step_token(message: Message, state: FSMContext):
-    token = (message.text or "").strip()
-    if not token:
-        await message.answer("❌ Токен не может быть пустым.")
-        return
-
-    data = await state.get_data()
-    chat_id = data.get("setup_chat_id")
-    if not chat_id:
-        await state.clear()
-        await message.answer("❌ Сессия истекла. Начните заново из группы.")
-        return
-
-    role = await get_role(chat_id, message.from_user.id)
-    if role != "admin":
-        await state.clear()
+@router.message(Command("setup_yougile"), F.chat.type.in_({"group", "supergroup"}))
+async def cmd_setup_yougile(message: Message) -> None:
+    """В группе: выдаёт deep-link на приватный чат с ботом для входа по логину/паролю."""
+    if not await is_team_owner(message):
         await message.answer("⛔ Только руководитель команды может настраивать канбан.")
         return
-
-    await message.answer("⏳ Проверяю токен и получаю список досок...")
-
-    client = YouGileClient(token)
-    try:
-        boards = await client.get_boards()
-    except Exception as e:
-        logger.warning("YouGile token validation failed: %s", e)
-        await message.answer(f"❌ Токен не прошёл проверку: {e}")
-        return
-    finally:
-        await client.close()
-
-    if len(boards) == 0:
-        await message.answer("❌ В аккаунте YouGile нет досок. Создайте доску в YouGile и повторите.")
-        await state.clear()
-        return
-
-    await state.update_data(kanban_token=token, boards=boards)
-
-    if len(boards) == 1:
-        board = boards[0]
-        async with get_session() as session:
-            await update_team_kanban(session, chat_id, token, board["id"], "yougile")
-        await state.clear()
-        await message.answer(
-            f"✅ Найдена одна доска «{board['title']}» — автоматически привязал её.\n"
-            f"Канбан настроен!"
-        )
-        return
-
+    bot_user = await message.bot.get_me()
+    deep_link = f"https://t.me/{bot_user.username}?start=yougile_login_{message.chat.id}"
     kb = InlineKeyboardBuilder()
-    for i, b in enumerate(boards):
-        kb.row(InlineKeyboardButton(
-            text=f"{b['title']}",
-            callback_data=f"yg_setup:board:{i}"
-        ))
-    kb.row(InlineKeyboardButton(text="❌ Отмена", callback_data="yg_setup:cancel"))
-
-    await state.set_state(YouGileSetupStates.choosing_board)
+    kb.row(InlineKeyboardButton(text="🔑 Войти в YouGile в ЛС", url=deep_link))
     await message.answer(
-        "📋 Найдено несколько досок. Выберите нужную:",
+        "🔐 Настройка YouGile\n\n"
+        "Логин и пароль запрашиваются в личных сообщениях с ботом, "
+        "чтобы они не попали в общий чат.",
         reply_markup=kb.as_markup(),
     )
 
 
-@router.callback_query(YouGileSetupStates.choosing_board, F.data.startswith("yg_setup:board:"))
-async def cb_choose_board(callback: CallbackQuery, state: FSMContext):
-    idx = int(callback.data.split(":")[2])
-    data = await state.get_data()
-    boards = data.get("boards", [])
-    token = data.get("kanban_token", "")
-    chat_id = data.get("setup_chat_id")
-
-    if idx < 0 or idx >= len(boards) or not chat_id:
-        await callback.answer("Ошибка: доска не найдена", show_alert=True)
-        return
-
-    board = boards[idx]
-    async with get_session() as session:
-        await update_team_kanban(session, chat_id, token, board["id"], "yougile")
-
-    await state.clear()
-    await callback.message.edit_text(
-        f"✅ Доска «{board['title']}» привязана!\n"
-        f"Канбан настроен."
+async def start_yougile_login_flow(message: Message, state: FSMContext, chat_id: int) -> None:
+    """Вызывается из /start yougile_login_{chat_id} (см. start.py) и запускает FSM."""
+    await state.set_state(KanbanAuthStates.waiting_login)
+    await state.update_data(setup_chat_id=chat_id)
+    await message.answer(
+        "Введи логин (email) от аккаунта YouGile:",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="❌ Отмена")]],
+            resize_keyboard=True,
+        ),
     )
-    await callback.answer()
-
-
-@router.callback_query(YouGileSetupStates.choosing_board, F.data == "yg_setup:cancel")
-async def cb_cancel(callback: CallbackQuery, state: FSMContext):
-    await state.clear()
-    await callback.message.edit_text("❌ Отменено.")
-    await callback.answer()
