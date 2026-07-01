@@ -6,11 +6,10 @@ from aiogram.types import Message, ReplyKeyboardRemove
 from src.config import settings
 from src.bot.handlers.menu import cmd_menu
 from src.bot.lexicon import L
-from src.bot.states import OnboardingStates, YouGileSetupStates
+from src.bot.states import OnboardingStates
 from src.db.models import User, PendingInvite, TeamMember, Team
 from src.db.repo import (
     get_or_create_user,
-    get_team_by_chat,
 )
 from src.db.session import get_session
 from src.userbot.manager import UserbotManager
@@ -27,28 +26,16 @@ async def cmd_start(message: Message, userbot_manager: UserbotManager, state: FS
 
     args = command.args.strip() if command and command.args else ""
 
-    if args.startswith("link_team_"):
-        chat_id_str = args.removeprefix("link_team_")
+    if args.startswith("link_team_") or args.startswith("yougile_login_"):
+        prefix = "link_team_" if args.startswith("link_team_") else "yougile_login_"
         try:
-            chat_id = int(chat_id_str)
+            target_chat_id = int(args.removeprefix(prefix))
         except (ValueError, TypeError):
-            await message.answer("❌ Некорректная ссылка.")
+            await message.answer("❌ Некорректная ссылка настройки YouGile.")
             return
-        async with get_session() as session:
-            team = await get_team_by_chat(session, chat_id)
-        if team is None:
-            await message.answer("❌ Команда не найдена. Убедитесь, что группа зарегистрирована.")
-            return
-        await state.set_state(YouGileSetupStates.waiting_token)
-        await state.update_data(setup_chat_id=chat_id)
-        await message.answer(
-            f"🔗 Настройка канбана для команды «{team.name or chat_id}».\n\n"
-            "Отправьте ваш API-токен YouGile:\n"
-            "(YouGile → Настройки → API → создать ключ)",
-        )
+        from src.bot.handlers.setup_yougile import start_yougile_login_flow
+        await start_yougile_login_flow(message, state, target_chat_id)
         return
-
-    if args.startswith("yougile_login_"):
         try:
             target_chat_id = int(args.removeprefix("yougile_login_"))
         except ValueError:
