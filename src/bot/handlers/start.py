@@ -48,6 +48,16 @@ async def cmd_start(message: Message, userbot_manager: UserbotManager, state: FS
         )
         return
 
+    if args.startswith("yougile_login_"):
+        try:
+            target_chat_id = int(args.removeprefix("yougile_login_"))
+        except ValueError:
+            await message.answer("❌ Некорректная ссылка настройки YouGile.")
+            return
+        from src.bot.handlers.setup_yougile import start_yougile_login_flow
+        await start_yougile_login_flow(message, state, target_chat_id)
+        return
+
     async with get_session() as session:
         user = await get_or_create_user(session, uid)
 
