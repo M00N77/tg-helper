@@ -1,7 +1,9 @@
 aiogram>=3.13
 telethon>=1.36
 SQLAlchemy[asyncio]>=2.0.36
-psycopg[binary]>=3.3
+aiosqlite>=0.20
+# Для PostgreSQL (закомментировано, используем SQLite)
+# psycopg[binary]>=3.3
 alembic>=1.13
 pydantic>=2.9
 pydantic-settings>=2.6
@@ -32,6 +34,9 @@ gigachat>=0.1.28
 
 # Ngrok туннель для локальной разработки
 pyngrok>=7.0
+
+# Часовые пояса (обязательно на Windows)
+tzdata>=2024.2
 
 # HTTP сервер для webhook endpoint
 aiohttp>=3.9
