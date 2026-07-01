@@ -40,14 +40,9 @@ class NewsTopicStates(StatesGroup):
     waiting_topic = State()
 
 
-class KanbanStates(StatesGroup):
-    waiting_token = State()
-
-
 class KanbanAuthStates(StatesGroup):
     waiting_login = State()
     waiting_password = State()
-    waiting_company = State()
     waiting_for_board = State()
 
 
@@ -85,11 +80,6 @@ class TaskCreationStates(StatesGroup):
 
 class OnboardingStates(StatesGroup):
     waiting_display_name = State()
-
-
-class YouGileSetupStates(StatesGroup):
-    waiting_token = State()
-    choosing_board = State()
 
 
 class DictStates(StatesGroup):
