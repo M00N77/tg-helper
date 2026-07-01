@@ -311,34 +311,37 @@ class YouGileClient:
                 f"{self.base_url}/auth/companies",
                 json={"login": login, "password": password}
             )
+            if response.status_code == 401:
+                raise ValueError("Неверный логин или пароль YouGile")
             if response.status_code != 200:
-                body = response.text
                 logging.warning(
-                    f"[YouGile][auth/companies] status={response.status_code} body={body}"
+                    "[YouGile][auth/companies] status=%s", response.status_code
                 )
-                raise RuntimeError(f"Ошибка авторизации: {body}")
-
+                raise RuntimeError(
+                    f"Ошибка авторизации: HTTP {response.status_code}"
+                )
             data = response.json()
             companies = data.get("content", [])
             if not companies:
-                raise RuntimeError("Аккаунт не привязан ни к одной компании")
+                raise ValueError("Аккаунт не привязан ни к одной компании YouGile")
 
-            # TODO: учитывать company_name, если у пользователя несколько компаний
+            # TODO: учитывать company_name / выбор компании, если их несколько.
             company_id = companies[0]["id"]
 
             response = await client.post(
                 f"{self.base_url}/auth/keys",
                 json={"login": login, "password": password, "companyId": company_id}
             )
+            if response.status_code == 401:
+                raise ValueError("Неверный логин или пароль YouGile")
             if response.status_code not in (200, 201):
-                body = response.text
                 logging.warning(
-                    f"[YouGile][auth/keys] status={response.status_code} body={body}"
+                    "[YouGile][auth/keys] status=%s", response.status_code
                 )
-                raise RuntimeError(f"Ошибка получения ключа: {body}")
-
+                raise RuntimeError(
+                    f"Ошибка получения ключа: HTTP {response.status_code}"
+                )
             key_data = response.json()
             if "key" not in key_data:
-                raise RuntimeError(f"Ответ не содержит ключ: {key_data}")
-
+                raise RuntimeError("Ответ YouGile не содержит ключ")
             return key_data["key"]
