@@ -114,9 +114,7 @@
 
 **Групповой чат (командные)**
 - `/i_am_director` — создать команду, стать директором, привязать чат
-- `/setup_yougile` — настроить YouGile через deep-link в ЛС (рекомендуется)
-- `/setup_kanban` — пошаговая настройка YouGile в группе
-- `/kanban_token TOKEN [BOARD]` — прямой ввод токена YouGile
+- `/setup_yougile` — настроить YouGile через deep-link в ЛС
 - `/link_yougile` — привязать Telegram ID к аккаунту YouGile
 - `/risks` — показать последние 10 рисков
 - `/activities_on` / `/activities_off` — вкл/выкл пульс-опросы
