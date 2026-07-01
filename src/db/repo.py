@@ -884,9 +884,12 @@ async def get_team_by_owner(
     session: AsyncSession, owner_telegram_id: int
 ) -> Team | None:
     result = await session.execute(
-        select(Team).where(Team.owner_telegram_id == owner_telegram_id)
+        select(Team)
+        .where(Team.owner_telegram_id == owner_telegram_id)
+        .order_by(Team.id.desc())
+        .limit(1)
     )
-    return result.scalar_one_or_none()
+    return result.scalars().first()
 
 
 async def get_team_by_id(session: AsyncSession, team_id: int) -> Team | None:
