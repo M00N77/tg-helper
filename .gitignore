@@ -3,6 +3,9 @@
 .env.*.local
 data/
 *.db
+*.dump
+*.sql
+*.zip
 *.db-journal
 *.db-shm
 *.db-wal

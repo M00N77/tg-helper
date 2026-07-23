@@ -36,7 +36,7 @@ async def check_user_permission(
                 "check_user_permission: init_default failed for team=%s",
                 member.team_id,
             )
-            return True  # fail open — таблица ещё не создана миграцией
+            return False  # deny by default
 
     if "*" in allowed:
         return True

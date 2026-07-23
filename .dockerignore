@@ -3,8 +3,12 @@
 .venv/
 venv/
 .env
+.env.*
 data/
 *.db
+*.dump
+*.sql
+*.zip
 *.db-journal
 *.session
 *.session-journal

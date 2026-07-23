@@ -33,13 +33,10 @@ async def cmd_start(message: Message, userbot_manager: UserbotManager, state: FS
         except (ValueError, TypeError):
             await message.answer("❌ Некорректная ссылка настройки YouGile.")
             return
-        from src.bot.handlers.setup_yougile import start_yougile_login_flow
-        await start_yougile_login_flow(message, state, target_chat_id)
-        return
-        try:
-            target_chat_id = int(args.removeprefix("yougile_login_"))
-        except ValueError:
-            await message.answer("❌ Некорректная ссылка настройки YouGile.")
+        from src.group_bot.permissions import get_role
+        role = await get_role(target_chat_id, uid)
+        if role not in ("owner", "admin"):
+            await message.answer("⛔ Только руководитель или админ команды может настраивать канбан.")
             return
         from src.bot.handlers.setup_yougile import start_yougile_login_flow
         await start_yougile_login_flow(message, state, target_chat_id)
