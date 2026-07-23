@@ -34,6 +34,16 @@ async def cmd_i_am_director(message: Message) -> None:
     user_id = message.from_user.id
     chat_title = message.chat.title or f"Чат {chat_id}"
 
+    # Проверяем, что вызывающий — администратор Telegram-группы
+    try:
+        admins = await message.bot.get_chat_administrators(chat_id)
+        if not any(a.user.id == user_id for a in admins):
+            await message.answer("⛔ Только администратор группы может стать директором.")
+            return
+    except Exception:
+        await message.answer("⛔ Не удалось проверить права администратора.")
+        return
+
     async with get_session() as session:
         team = await get_team_by_chat(session, chat_id)
         if team is not None:

@@ -133,10 +133,9 @@ async def cb_kanban_board(callback: CallbackQuery):
     board_id = get_board_id(team) if team else None
 
     logger.info(
-        "[DEBUG BOARD] chat_id=%s team=%s team.kanban_token=%s board_id=%s",
+        "board: chat_id=%s team=%s board_id=%s",
         chat_id,
         team.id if team else None,
-        team.kanban_token[:8] + "..." if team and team.kanban_token else None,
         board_id,
     )
 

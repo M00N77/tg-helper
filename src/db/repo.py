@@ -408,24 +408,33 @@ async def list_open_commitments(
     return list(result.scalars().all())
 
 
-async def update_commitment_status(session: AsyncSession, commitment_id: int, status: str) -> None:
+async def update_commitment_status(session: AsyncSession, commitment_id: int, status: str, user_id: int | None = None) -> None:
     c = await session.get(Commitment, commitment_id)
     if c is not None:
+        if user_id is not None and c.user_id != user_id:
+            logger.warning("IDOR blocked: update_commitment_status commitment=%s user=%s owner=%s", commitment_id, user_id, c.user_id)
+            return
         c.status = status
 
 
-async def trash_commitment(session: AsyncSession, commitment_id: int) -> bool:
+async def trash_commitment(session: AsyncSession, commitment_id: int, user_id: int | None = None) -> bool:
     c = await session.get(Commitment, commitment_id)
     if c is None or c.status == "trashed":
+        return False
+    if user_id is not None and c.user_id != user_id:
+        logger.warning("IDOR blocked: trash_commitment commitment=%s user=%s owner=%s", commitment_id, user_id, c.user_id)
         return False
     c.status = "trashed"
     c.deleted_at = datetime.utcnow()
     return True
 
 
-async def restore_commitment(session: AsyncSession, commitment_id: int) -> bool:
+async def restore_commitment(session: AsyncSession, commitment_id: int, user_id: int | None = None) -> bool:
     c = await session.get(Commitment, commitment_id)
     if c is None or c.status != "trashed":
+        return False
+    if user_id is not None and c.user_id != user_id:
+        logger.warning("IDOR blocked: restore_commitment commitment=%s user=%s owner=%s", commitment_id, user_id, c.user_id)
         return False
     c.status = "open"
     c.deleted_at = None
@@ -509,8 +518,12 @@ async def create_pending_action(
     return pa
 
 
-async def get_pending_action(session: AsyncSession, action_id: int) -> PendingAction | None:
-    return await session.get(PendingAction, action_id)
+async def get_pending_action(session: AsyncSession, action_id: int, user_id: int | None = None) -> PendingAction | None:
+    pa = await session.get(PendingAction, action_id)
+    if pa is not None and user_id is not None and pa.user_id != user_id:
+        logger.warning("IDOR blocked: action_id=%s user_id=%s owner=%s", action_id, user_id, pa.user_id)
+        return None
+    return pa
 
 
 async def update_pending_action(session: AsyncSession, action_id: int, payload: dict) -> None:
@@ -1440,8 +1453,11 @@ async def get_open_blockers(session: AsyncSession, team_id: int) -> list[Blocker
     return list(result.scalars().all())
 
 
-async def resolve_blocker(session: AsyncSession, blocker_id: int) -> bool:
-    result = await session.execute(select(Blocker).where(Blocker.id == blocker_id))
+async def resolve_blocker(session: AsyncSession, blocker_id: int, team_id: int | None = None) -> bool:
+    query = select(Blocker).where(Blocker.id == blocker_id)
+    if team_id is not None:
+        query = query.where(Blocker.team_id == team_id)
+    result = await session.execute(query)
     b = result.scalar_one_or_none()
     if b:
         b.status = "resolved"
@@ -1450,8 +1466,11 @@ async def resolve_blocker(session: AsyncSession, blocker_id: int) -> bool:
     return False
 
 
-async def dismiss_blocker(session: AsyncSession, blocker_id: int) -> bool:
-    result = await session.execute(select(Blocker).where(Blocker.id == blocker_id))
+async def dismiss_blocker(session: AsyncSession, blocker_id: int, team_id: int | None = None) -> bool:
+    query = select(Blocker).where(Blocker.id == blocker_id)
+    if team_id is not None:
+        query = query.where(Blocker.team_id == team_id)
+    result = await session.execute(query)
     b = result.scalar_one_or_none()
     if b:
         b.status = "dismissed"

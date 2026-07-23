@@ -1,6 +1,8 @@
 import asyncio
 import json as json_mod
 import logging
+import hashlib
+import hmac
 from pathlib import Path
 
 import aiofiles
@@ -55,12 +57,20 @@ def extract_record_id(payload: dict) -> str | None:
 
 
 async def handle_mtslink_webhook(request: web.Request) -> web.Response:
+    # Проверка секрета/подписи вебхука
+    secret = settings.WEBHOOK_SECRET
+    if secret:
+        actual = request.headers.get("X-Webhook-Secret", "")
+        if not hmac.compare_digest(actual, secret):
+            logger.warning("webhook: invalid secret (got=%s)", actual[:8] if actual else "none")
+            return web.Response(status=401, text="unauthorized")
+
     data = await request.json()
     event = data.get("event") or data.get("type", "unknown")
 
     logger.info(
-        "=== WEBHOOK RECEIVED === event=%s full_payload=%s",
-        event, json_mod.dumps(data, ensure_ascii=False, indent=2),
+        "=== WEBHOOK RECEIVED === event=%s",
+        event,
     )
 
     if event == "recordFile.ready":
@@ -257,7 +267,7 @@ async def download_and_process_meeting(
             except Exception:
                 pass
         try:
-            await bot.send_message(chat_id, f"⚠️ Сбой пайплайна обработки записи: {error_text}")
+            await bot.send_message(chat_id, "⚠️ Сбой пайплайна обработки записи. Администратор уведомлён.")
         except Exception:
             pass
     finally:
@@ -277,7 +287,7 @@ async def start_webhook_server() -> None:
 
     _runner = web.AppRunner(app)
     await _runner.setup()
-    site = web.TCPSite(_runner, "0.0.0.0", settings.WEBHOOK_PORT)
+    site = web.TCPSite(_runner, "127.0.0.1", settings.WEBHOOK_PORT)
     await site.start()
     logger.info("Webhook server started on port %d", settings.WEBHOOK_PORT)
 

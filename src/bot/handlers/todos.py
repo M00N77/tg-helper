@@ -87,8 +87,9 @@ async def cmd_restore(message: Message, command: CommandObject) -> None:
     except ValueError:
         await message.answer("ID должно быть числом")
         return
+    uid = message.from_user.id
     async with get_session() as session:
-        ok = await restore_commitment(session, cid)
+        ok = await restore_commitment(session, cid, user_id=uid)
     if ok:
         await message.answer(f"♻ Обязательство <b>#{cid}</b> восстановлено из корзины")
     else:
@@ -98,8 +99,9 @@ async def cmd_restore(message: Message, command: CommandObject) -> None:
 @router.callback_query(F.data.startswith("todo:done:"))
 async def cb_done(callback: CallbackQuery) -> None:
     cid = int(callback.data.split(":")[2])
+    uid = callback.from_user.id
     async with get_session() as session:
-        await update_commitment_status(session, cid, "done")
+        await update_commitment_status(session, cid, "done", user_id=uid)
     if callback.message:
         await callback.message.edit_text(callback.message.html_text + "\n\n✅ Готово")
     await callback.answer()
@@ -108,8 +110,9 @@ async def cb_done(callback: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("todo:trash:"))
 async def cb_trash(callback: CallbackQuery) -> None:
     cid = int(callback.data.split(":")[2])
+    uid = callback.from_user.id
     async with get_session() as session:
-        ok = await trash_commitment(session, cid)
+        ok = await trash_commitment(session, cid, user_id=uid)
     if ok:
         if callback.message:
             await callback.message.edit_text(callback.message.html_text + "\n\n🗑 В корзине")
@@ -122,8 +125,9 @@ async def cb_trash(callback: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("todo:restore:"))
 async def cb_restore(callback: CallbackQuery) -> None:
     cid = int(callback.data.split(":")[2])
+    uid = callback.from_user.id
     async with get_session() as session:
-        ok = await restore_commitment(session, cid)
+        ok = await restore_commitment(session, cid, user_id=uid)
     if ok:
         if callback.message:
             await callback.message.edit_text(callback.message.html_text + "\n\n♻ Восстановлено")

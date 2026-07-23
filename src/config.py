@@ -56,6 +56,7 @@ class Settings(BaseSettings):
 
 
     WEBHOOK_BASE_URL: str = ""
+    WEBHOOK_SECRET: str = ""
     NGROK_AUTHTOKEN: str = ""
     NGROK_ENABLED: bool = False
     WEBHOOK_PORT: int = 8080

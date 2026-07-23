@@ -98,12 +98,18 @@ async def _process_one(
 
     elif kind == "document" and parse_docs:
         filename = getattr(msg.file, "name", None) or f"{msg.id}.bin"
-        if is_supported(filename):
+        safe_name = Path(filename).name
+        if is_supported(safe_name):
             try:
-                target = media_root / f"{peer_id}_{msg.id}_{filename}"
-                await msg.download_media(file=str(target))
-                media_path = str(target)
-                extracted = await extract_text(target)
+                target = media_root / f"{peer_id}_{msg.id}_{safe_name}"
+                target_resolved = target.resolve()
+                media_root_resolved = media_root.resolve()
+                if not str(target_resolved).startswith(str(media_root_resolved)):
+                    logger.warning("path traversal blocked: %s", safe_name)
+                    return
+                await msg.download_media(file=str(target_resolved))
+                media_path = str(target_resolved)
+                extracted = await extract_text(target_resolved)
             except Exception:
                 logger.exception("doc parse failed for msg %s", msg.id)
 

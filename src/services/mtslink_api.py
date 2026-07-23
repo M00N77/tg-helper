@@ -94,7 +94,7 @@ async def get_recording_download_url(token: str, event_session_id: str, record_i
                         continue
 
                     raw_text = await resp.text()
-                    logger.info("MTSLINK: raw body (%d chars)=%s", len(raw_text), raw_text)
+                    logger.debug("MTSLINK: raw body (%d chars)=%s", len(raw_text), raw_text)
 
                     try:
                         parsed = __import__("json").loads(raw_text)

@@ -53,7 +53,8 @@ async def cmd_blocker_resolve(message: Message) -> None:
         return
     blocker_id = int(args[1])
     async with get_session() as session:
-        ok = await resolve_blocker(session, blocker_id)
+        team = await get_team_by_chat(session, message.chat.id)
+        ok = await resolve_blocker(session, blocker_id, team_id=team.id if team else None)
     if ok:
         await message.answer(f"✅ Подвисшая задача #{blocker_id} закрыта.")
     else:
@@ -68,7 +69,8 @@ async def cmd_blocker_dismiss(message: Message) -> None:
         return
     blocker_id = int(args[1])
     async with get_session() as session:
-        ok = await dismiss_blocker(session, blocker_id)
+        team = await get_team_by_chat(session, message.chat.id)
+        ok = await dismiss_blocker(session, blocker_id, team_id=team.id if team else None)
     if ok:
         await message.answer(f"🗑 Подвисшая задача #{blocker_id} отклонена.")
     else:

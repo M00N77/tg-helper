@@ -26,7 +26,6 @@ RUN pip install --upgrade pip \
 COPY alembic/ ./alembic/
 COPY alembic.ini ./
 COPY src/ ./src/
-COPY main.py ./
 
 # data — монтируется томом снаружи (БД, сессии, qdrant, media, кэш моделей)
 RUN mkdir -p /app/data

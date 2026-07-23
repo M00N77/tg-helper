@@ -38,6 +38,7 @@ from src.db.repo import (
     list_open_commitments,
     list_trashed_commitments,
     restore_commitment,
+    set_active_board,
     trash_commitment,
     update_commitment_status,
     upsert_api_key,
@@ -422,6 +423,44 @@ async def _exec_kanban_intent(intent: dict, message: Message) -> None:
             return
         await message.answer(f"✅ «{task_query}» → <b>{col.get('title')}</b>")
 
+    elif kind == "select_board":
+        board_name_hint = _get("board_name")
+        try:
+            boards = await client.get_boards()
+        except Exception as e:
+            await message.answer(f"❌ Ошибка при получении досок: {e}")
+            return
+
+        if not boards:
+            await message.answer("❌ Досок не найдено в YouGile")
+            return
+
+        if board_name_hint and board_name_hint.lower() not in ("любая", "любую", "любой", ""):
+            matched = [b for b in boards if board_name_hint.lower() in b.get("title", "").lower()]
+            if len(matched) == 1:
+                b = matched[0]
+                async with get_session() as session:
+                    await set_active_board(session, team.chat_id, b["id"], b["title"])
+                await message.answer(f"✅ Выбрана доска: <b>{b['title']}</b>")
+                return
+            elif len(matched) > 1:
+                names = "\n".join(f"• {b['title']}" for b in matched[:10])
+                await message.answer(f"Найдено несколько досок:\n{names}\n\nУточните название.")
+                return
+
+        if len(boards) == 1:
+            b = boards[0]
+            async with get_session() as session:
+                await set_active_board(session, team.chat_id, b["id"], b["title"])
+            await message.answer(f"✅ Доска одна — выбрана: <b>{b['title']}</b>")
+            return
+
+        names = "\n".join(f"• {b['title']}" for b in boards[:20])
+        await message.answer(
+            f"📋 <b>Доступные доски:</b>\n{names}\n\n"
+            "Напишите название доски, которую хотите выбрать."
+        )
+
     elif kind == "smalltalk":
         reply = _get("reply", "Готов помочь с канбан-доской!")
         await message.answer(reply)
@@ -437,7 +476,7 @@ async def _execute_intent(intent, message, state, userbot_manager, *, tz_name: s
         providers = await get_provider_chain(session, owner)
         heavy = owner.settings.use_heavy_model
 
-    if kind in ("create_task", "show_boards", "move_task", "update_kanban_card", "smalltalk"):
+    if kind in ("create_task", "show_boards", "move_task", "update_kanban_card", "select_board", "smalltalk"):
         await _exec_kanban_intent(intent, message)
         return
 
@@ -498,15 +537,16 @@ async def _execute_intent(intent, message, state, userbot_manager, *, tz_name: s
         if not query:
             await message.answer("Какое обязательство убрать в корзину?")
             return
+        uid = message.from_user.id
         async with get_session() as session:
-            owner = await get_or_create_user(session, message.from_user.id)
+            owner = await get_or_create_user(session, uid)
             items = await list_open_commitments(session, owner)
             matched = [c for c in items if query in (c.text or "").lower()]
             if not matched:
                 await message.answer(f"Не нашёл обязательств по «{query}».")
                 return
             for c in matched:
-                await trash_commitment(session, c.id)
+                await trash_commitment(session, c.id, user_id=uid)
         names = "\n".join(f"• {c.text}" for c in matched)
         await message.answer(f"🗑 Переместил в корзину ({len(matched)}):\n{names}")
         return
@@ -516,15 +556,16 @@ async def _execute_intent(intent, message, state, userbot_manager, *, tz_name: s
         if not query:
             await message.answer("Какое обязательство восстановить?")
             return
+        uid = message.from_user.id
         async with get_session() as session:
-            owner = await get_or_create_user(session, message.from_user.id)
+            owner = await get_or_create_user(session, uid)
             items = await list_trashed_commitments(session, owner)
             matched = [c for c in items if query in (c.text or "").lower()]
             if not matched:
                 await message.answer(f"Не нашёл в корзине по «{query}».")
                 return
             for c in matched:
-                await restore_commitment(session, c.id)
+                await restore_commitment(session, c.id, user_id=uid)
         names = "\n".join(f"• {c.text}" for c in matched)
         await message.answer(f"♻ Восстановил из корзины ({len(matched)}):\n{names}")
         return
@@ -1673,7 +1714,7 @@ async def _exec_remove_reminder(intent, message) -> None:
             await message.answer(f"Не нашёл напоминаний по «{needle}».")
             return
         for c in matched:
-            await update_commitment_status(session, c.id, "cancelled")
+            await update_commitment_status(session, c.id, "cancelled", user_id=message.from_user.id)
     names = "\n".join(f"• {c.text}" for c in matched)
     await message.answer(f"🗑 Снял ({len(matched)}):\n{names}")
 
