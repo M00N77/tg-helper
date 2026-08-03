@@ -5,6 +5,7 @@ from cryptography.fernet import Fernet
 
 from src.config import settings
 from src.crypto import decrypt, encrypt
+from src.services.crypto_service import crypto_service
 
 
 def test_encrypt_decrypt_roundtrip():
@@ -65,3 +66,30 @@ def test_decrypt_wrong_key():
 
 def test_encryption_key_loaded():
     Fernet(settings.encryption_key.encode())
+
+
+@pytest.mark.asyncio
+async def test_crypto_service_roundtrip():
+    original = "Hello, World! 123"
+    encrypted = await crypto_service.encrypt_data(original)
+    assert encrypted != original
+    decrypted = await crypto_service.decrypt_data(encrypted)
+    assert decrypted == original
+
+
+@pytest.mark.asyncio
+async def test_crypto_service_none():
+    assert await crypto_service.decrypt_data(None) is None
+    assert await crypto_service.decrypt_data(None, fallback_raw=True) is None
+
+
+@pytest.mark.asyncio
+async def test_crypto_service_strict_fails_on_invalid():
+    with pytest.raises(ValueError, match="Не удалось расшифровать"):
+        await crypto_service.decrypt_data("invalid_base64==")
+
+
+@pytest.mark.asyncio
+async def test_crypto_service_fallback_raw():
+    assert await crypto_service.decrypt_data("legacy-plaintext", fallback_raw=True) == "legacy-plaintext"
+
