@@ -5,7 +5,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from src.bot.filters import OwnerOnly, is_team_owner, get_team_for_event
+from src.bot.filters import OwnerOnly, get_team_for_event
 from src.bot.states import MenuStates
 from src.core.news import build_news_digest
 from src.core.timeutil import fmt_local
@@ -277,9 +277,7 @@ async def cb_menu_kanban(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data == "menu:kanban:login")
 async def cb_menu_kanban_login(callback: CallbackQuery, state: FSMContext) -> None:
-    if not await is_team_owner(callback):
-        await callback.answer("⛔ Только владелец команды может менять настройки доски", show_alert=True)
-        return
+    # RBAC-проверка (владелец/админ) выполняется внутри cmd_kanban_login
     await callback.answer()
     from src.bot.handlers.kanban import cmd_kanban_login
     await cmd_kanban_login(callback.message, state)
@@ -287,9 +285,7 @@ async def cb_menu_kanban_login(callback: CallbackQuery, state: FSMContext) -> No
 
 @router.callback_query(F.data == "menu:kanban:board")
 async def cb_menu_kanban_board(callback: CallbackQuery, state: FSMContext) -> None:
-    if not await is_team_owner(callback):
-        await callback.answer("⛔ Только владелец команды может менять доску", show_alert=True)
-        return
+    # RBAC-проверка (владелец/админ) выполняется внутри cmd_kanban_board
     await callback.answer()
     from src.bot.handlers.kanban import cmd_kanban_board
     await cmd_kanban_board(callback.message, state)

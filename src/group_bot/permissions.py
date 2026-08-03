@@ -5,6 +5,7 @@
 - TeamMember.role == "admin" — назначенные руководители.
 Остальные участники — "member".
 """
+from src.config import settings
 from src.db.repo import get_team_by_chat, get_team_member
 from src.db.session import get_session
 
@@ -26,3 +27,15 @@ async def get_role(chat_id: int, telegram_id: int) -> str:
 async def is_admin(chat_id: int, telegram_id: int) -> bool:
     """True, если пользователь — директор команды или назначенный руководитель."""
     return await get_role(chat_id, telegram_id) == "admin"
+
+
+def can_manage_kanban(team, member, telegram_id: int) -> bool:
+    """RBAC: настраивать канбан-доску могут владелец бота, владелец команды
+    и участники с ролью admin/owner в TeamMember."""
+    if telegram_id in settings.all_allowed_ids:
+        return True
+    if team is None:
+        return False
+    if member is not None and member.role in ("admin", "owner"):
+        return True
+    return bool(team.owner_telegram_id and team.owner_telegram_id == telegram_id)
