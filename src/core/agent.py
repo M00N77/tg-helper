@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 class KanbanIntentResponse(BaseModel):
     """Структурированный ответ LLM-агента для управления Канбан-доской."""
-    intent: Literal["create_task", "show_boards", "move_task", "smalltalk"]
+    intent: Literal["create_task", "show_boards", "move_task", "select_board", "smalltalk"]
     parameters: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -235,6 +235,12 @@ AGENT_SYSTEM = """\
     Параметров нет.
     Используй для фраз: «покажи доску», «что на канбане», «статус задач».
 
+15.1) "select_board" — пользователь просит выбрать доску для работы.
+      Параметры:
+        "board_name": "название доски (необязательно). Если не указано — показать список досок".
+      Используй для фраз: «выбери доску», «смени доску»,
+      «переключи доску», «выбери любую доску», «покажи другую доску».
+
 16) "move_task" — переместить задачу в другую колонку.
     Параметры:
       "task_title":    "название задачи (обязательно)",
@@ -346,12 +352,19 @@ KANBAN_AGENT_SYSTEM = """\
 2) "show_boards" — показать содержимое канбан-доски (все колонки с задачами).
    Параметров нет.
 
-3) "move_task" — переместить задачу в другую колонку.
+3) "select_board" — пользователь просит выбрать доску для работы.
+   Параметры:
+     "board_name": "название доски (необязательно). Если не указано — показать список досок для выбора".
+   Если board_name не указан — покажи список досок и предложи выбрать.
+   Если указан — выбери эту доску.
+   Примеры фраз: «выбери доску», «смени доску», «переключи доску», «выбери любую доску».
+
+4) "move_task" — переместить задачу в другую колонку.
    Параметры:
      "task_title":    "название задачи (обязательно)",
      "target_column": "название колонки назначения (обязательно)".
 
-4) "smalltalk" — пользователь общается, а не просит действие.
+5) "smalltalk" — пользователь общается, а не просит действие.
    Параметры: "reply": "твой дружелюбный ответ (можно HTML-разметку: <b>, <i>, <code>)".
 
 Примеры:
@@ -658,7 +671,7 @@ async def process_free_text(
         str — готовый текст ответа (можно передать в message.answer())
     """
     from src.bot.handlers.yougile import YouGileClient
-    from src.db.repo import get_or_create_user, get_team_by_chat
+    from src.db.repo import get_or_create_user, get_team_by_chat, set_active_board
     from src.db.session import get_session
     from src.llm.router import get_provider_chain, llm_with_fallback
     from src.services.crypto_service import crypto_service
@@ -751,6 +764,44 @@ async def process_free_text(
             if deadline_raw:
                 tail += f"\n📅 Дедлайн: {deadline_raw}"
             results.append(f"✅ Задача «{title}» создана!\n📋 Доска: {board_name}{tail}")
+
+        elif response.intent == "select_board":
+            board_name_hint = response.parameters.get("board_name", "").strip()
+            try:
+                boards = await client.get_boards()
+            except Exception as e:
+                results.append(f"❌ Ошибка при получении досок: {e}")
+                continue
+
+            if not boards:
+                results.append("❌ Досок не найдено в YouGile")
+                continue
+
+            if board_name_hint and board_name_hint.lower() not in ("любая", "любую", "любой", ""):
+                matched = [b for b in boards if board_name_hint.lower() in b.get("title", "").lower()]
+                if len(matched) == 1:
+                    b = matched[0]
+                    async with get_session() as s:
+                        await set_active_board(s, chat_id, b["id"], b["title"])
+                    results.append(f"✅ Выбрана доска: <b>{b['title']}</b>")
+                    continue
+                elif len(matched) > 1:
+                    names = "\n".join(f"• {b['title']}" for b in matched[:10])
+                    results.append(f"Найдено несколько досок:\n{names}\n\nУточните название.")
+                    continue
+
+            if len(boards) == 1:
+                b = boards[0]
+                async with get_session() as s:
+                    await set_active_board(s, chat_id, b["id"], b["title"])
+                results.append(f"✅ Доска одна — выбрана: <b>{b['title']}</b>")
+                continue
+
+            names = "\n".join(f"• {b['title']}" for b in boards[:20])
+            results.append(
+                f"📋 <b>Доступные доски:</b>\n{names}\n\n"
+                "Напишите название доски, которую хотите выбрать."
+            )
 
         elif response.intent == "show_boards":
             try:
