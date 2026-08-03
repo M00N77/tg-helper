@@ -19,19 +19,21 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from src.bot.filters import is_team_owner, get_team_for_event
+from src.bot.filters import get_team_for_event
 from src.bot.states import KanbanAuthStates, KanbanCardStates
 
 from src.bot.handlers.yougile import YouGileClient, _parse_deadline, get_board_id
 from sqlalchemy import select
+from src.config import settings
 from src.db.session import get_session
 from src.db.repo import (
     set_active_board, update_team_kanban,
     get_team_members, get_or_create_user, set_team_member_yougile_id,
-    get_team_by_chat, get_team_by_owner,
+    get_team_by_chat,
     get_user_teams, get_team_member,
 )
 from src.db.models import Team, TeamMember
+from src.group_bot.permissions import can_manage_kanban
 from src.services.crypto_service import crypto_service
 from src.userbot.manager import UserbotManager
 
@@ -121,9 +123,33 @@ def _board_menu_markup(team_id: int, is_admin: bool) -> InlineKeyboardMarkup:
 
 def _is_team_admin(team: Team, member: TeamMember | None, telegram_id: int) -> bool:
     """admin/owner может настраивать доску: роль в TeamMember или владелец команды."""
-    if member is not None and member.role in ("admin", "owner"):
-        return True
-    return team.owner_telegram_id == telegram_id
+    return can_manage_kanban(team, member, telegram_id)
+
+
+async def _resolve_dm_team(session, event: Message | CallbackQuery) -> Team | None:
+    """Команда для события из ЛС: по чату → по владению → первая команда участника."""
+    team = await get_team_for_event(session, event)
+    if team is None and event.from_user:
+        teams = await get_user_teams(session, event.from_user.id)
+        if teams:
+            team = teams[0]
+    return team
+
+
+async def _can_manage_message(message: Message, state: FSMContext | None = None) -> bool:
+    """RBAC-проверка для message-хендлеров настройки доски. При отказе отвечает."""
+    uid = message.from_user.id
+    async with get_session() as session:
+        data = await state.get_data() if state is not None else {}
+        chat_id = data.get("setup_chat_id")
+        team = await get_team_by_chat(session, chat_id) if chat_id else None
+        if team is None:
+            team = await _resolve_dm_team(session, message)
+        member = await get_team_member(session, team.id, uid) if team else None
+        allowed = can_manage_kanban(team, member, uid)
+    if not allowed:
+        await message.answer("⛔ Доступно только администраторам")
+    return allowed
 
 
 async def _render_board_menu(message: Message, team: Team, member: TeamMember | None) -> None:
@@ -406,11 +432,11 @@ async def cb_kanban_tasks(callback: CallbackQuery):
 @router.message(Command("kanban_login"), F.chat.type == "private")
 async def cmd_kanban_login(message: Message, state: FSMContext):
     from src.group_bot.permissions import get_role
-    from src.bot.filters import _get_chat_id  # noqa: F401
 
     uid = message.from_user.id
     async with get_session() as session:
-        team = await get_team_by_owner(session, uid)
+        teams = await get_user_teams(session, uid)
+    team = teams[0] if teams else None
     if team is None:
         await message.answer(
             "❌ У тебя нет команды, которой ты владеешь или в которой ты админ.\n"
@@ -419,8 +445,8 @@ async def cmd_kanban_login(message: Message, state: FSMContext):
         )
         return
     role = await get_role(team.chat_id, uid)
-    if role not in ("owner", "admin"):
-        await message.answer("⛔ Только владелец или админ команды может настраивать доску.")
+    if role != "admin":
+        await message.answer("⛔ Доступно только администраторам")
         return
     await state.set_state(KanbanAuthStates.waiting_login)
     await state.update_data(setup_chat_id=team.chat_id)
@@ -435,8 +461,7 @@ async def cmd_kanban_login(message: Message, state: FSMContext):
 
 @router.message(KanbanAuthStates.waiting_login)
 async def process_login(message: Message, state: FSMContext):
-    if not await is_team_owner(message):
-        await message.answer("⛔ Только владелец команды может менять настройки доски")
+    if not await _can_manage_message(message, state):
         await state.clear()
         return
     if message.text == "❌ Отмена":
@@ -452,8 +477,7 @@ async def process_login(message: Message, state: FSMContext):
 
 @router.message(KanbanAuthStates.waiting_password)
 async def process_password(message: Message, state: FSMContext):
-    if not await is_team_owner(message):
-        await message.answer("⛔ Только владелец команды может менять настройки доски")
+    if not await _can_manage_message(message, state):
         await state.clear()
         return
     if message.text == "❌ Отмена":
@@ -504,14 +528,15 @@ async def process_password(message: Message, state: FSMContext):
 
 @router.message(Command("kanban_board"), F.chat.type == "private")
 async def cmd_kanban_board(message: Message, state: FSMContext):
-    if not await is_team_owner(message):
-        await message.answer("⛔ Только владелец команды может менять доску")
+    uid = message.from_user.id
+    async with get_session() as session:
+        team = await _resolve_dm_team(session, message)
+        member = await get_team_member(session, team.id, uid) if team else None
+    if not can_manage_kanban(team, member, uid):
+        await message.answer("⛔ Доступно только администраторам")
         return
 
     args = message.text.split(maxsplit=1)
-
-    async with get_session() as session:
-        team = await get_team_for_event(session, message)
 
     if not team or not team.kanban_token:
         await message.answer("❌ Сначала выполни /kanban_login")
@@ -586,8 +611,12 @@ async def cmd_kanban_board(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("sb:"))
 async def cb_set_board(callback: CallbackQuery, state: FSMContext):
-    if not await is_team_owner(callback):
-        await callback.answer("⛔ Только владелец команды может менять доску", show_alert=True)
+    uid = callback.from_user.id
+    async with get_session() as session:
+        team = await _resolve_dm_team(session, callback)
+        member = await get_team_member(session, team.id, uid) if team else None
+    if not can_manage_kanban(team, member, uid):
+        await callback.answer("⛔ Доступно только администраторам", show_alert=True)
         return
     idx = int(callback.data.split(":")[1])
 
@@ -600,7 +629,6 @@ async def cb_set_board(callback: CallbackQuery, state: FSMContext):
     logger.info("Board selected via callback: chat=%s board_id=%s board_name=%s", callback.message.chat.id, board_id, board_name)
 
     async with get_session() as session:
-        team = await get_team_for_event(session, callback)
         token = await _decrypt_kanban_token(team)
         await set_active_board(session, team.chat_id if team else callback.message.chat.id, board_id, board_name)
 
@@ -636,8 +664,12 @@ async def cb_set_board(callback: CallbackQuery, state: FSMContext):
 
 @router.message(KanbanAuthStates.waiting_for_board)
 async def process_board(message: Message, state: FSMContext):
-    if not await is_team_owner(message):
-        await message.answer("⛔ Только владелец команды может менять доску")
+    uid = message.from_user.id
+    async with get_session() as session:
+        team = await _resolve_dm_team(session, message)
+        member = await get_team_member(session, team.id, uid) if team else None
+    if not can_manage_kanban(team, member, uid):
+        await message.answer("⛔ Доступно только администраторам")
         await state.clear()
         return
     data = await state.get_data()
@@ -652,7 +684,6 @@ async def process_board(message: Message, state: FSMContext):
     await state.clear()
 
     async with get_session() as session:
-        team = await get_team_for_event(session, message)
         await set_active_board(session, team.chat_id if team else message.chat.id, board_id, board_name)
 
     await message.answer(
@@ -916,8 +947,12 @@ async def cb_kanban_stats(callback: CallbackQuery):
 
 @router.callback_query(F.data == "kanban:settings")
 async def cb_kanban_settings(callback: CallbackQuery):
-    if not await is_team_owner(callback):
-        await callback.answer("⛔ Только владелец команды может менять настройки доски", show_alert=True)
+    uid = callback.from_user.id
+    async with get_session() as session:
+        team = await get_team_for_event(session, callback)
+        member = await get_team_member(session, team.id, uid) if team else None
+    if not can_manage_kanban(team, member, uid):
+        await callback.answer("⛔ Доступно только администраторам", show_alert=True)
         return
     kb = InlineKeyboardBuilder()
     kb.row(InlineKeyboardButton(text="🔄 Сменить доску", callback_data="kanban:change_board"))
@@ -935,11 +970,13 @@ async def cb_kanban_settings(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("kanban:change_board:"))
 async def cb_kanban_change_board(callback: CallbackQuery, state: FSMContext):
-    if not await is_team_owner(callback):
-        await callback.answer("⛔ Только владелец команды может менять доску", show_alert=True)
-        return
+    uid = callback.from_user.id
     async with get_session() as session:
         team = await get_team_for_event(session, callback)
+        member = await get_team_member(session, team.id, uid) if team else None
+    if not can_manage_kanban(team, member, uid):
+        await callback.answer("⛔ Доступно только администраторам", show_alert=True)
+        return
     board_id = get_board_id(team)
     if not team or not team.kanban_token or not board_id:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
