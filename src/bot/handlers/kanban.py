@@ -12,6 +12,7 @@ from aiogram.types import (
     Message,
     CallbackQuery,
     InlineKeyboardButton,
+    InlineKeyboardMarkup,
     KeyboardButton,
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
@@ -28,8 +29,9 @@ from src.db.repo import (
     set_active_board, update_team_kanban,
     get_team_members, get_or_create_user, set_team_member_yougile_id,
     get_team_by_chat, get_team_by_owner,
+    get_user_teams, get_team_member,
 )
-from src.db.models import TeamMember
+from src.db.models import Team, TeamMember
 from src.services.crypto_service import crypto_service
 from src.userbot.manager import UserbotManager
 
@@ -102,40 +104,63 @@ def format_card_preview(task: dict, column_title: str, users_dict: dict[str, str
     return "\n".join(lines)
 
 
-@router.message(Command("kanban"))
-async def cmd_kanban(message: Message):
-    """Управление канбан-доской"""
-    async with get_session() as session:
-        team = await get_team_for_event(session, message)
-    
-    is_owner = await is_team_owner(message)
-    
+def _board_menu_markup(team_id: int, is_admin: bool) -> InlineKeyboardMarkup:
+    """Клавиатура меню доски: у member — только «Мои задачи», у admin/owner — ещё настройки."""
     kb = InlineKeyboardBuilder()
-    if not team or not team.kanban_token:
-        if is_owner:
-            kb.row(InlineKeyboardButton(text="🔑 Войти по логину и паролю YouGile", callback_data="menu:kanban:login"))
-    else:
-        kb.row(
-            InlineKeyboardButton(text="📊 Показать доску", callback_data="kanban:board"),
-            InlineKeyboardButton(text="➕ Создать задачу", callback_data="kanban:add"),
+    kb.row(InlineKeyboardButton(
+        text="📋 Мои задачи",
+        callback_data=KanbanTeamCB(team_id=team_id, action="my_tasks").pack(),
+    ))
+    if is_admin:
+        kb.row(InlineKeyboardButton(
+            text="⚙️ Настройки",
+            callback_data=KanbanTeamCB(team_id=team_id, action="settings").pack(),
+        ))
+    return kb.as_markup()
+
+
+def _is_team_admin(team: Team, member: TeamMember | None, telegram_id: int) -> bool:
+    """admin/owner может настраивать доску: роль в TeamMember или владелец команды."""
+    if member is not None and member.role in ("admin", "owner"):
+        return True
+    return team.owner_telegram_id == telegram_id
+
+
+async def _render_board_menu(message: Message, team: Team, member: TeamMember | None) -> None:
+    """Отправляет меню канбан-доски одной команды (если доска настроена)."""
+    if not team.kanban_token:
+        await message.answer(
+            f"❌ Канбан-доска команды «{team.name or '?'}» не настроена.\n"
+            "Попроси администратора выполнить /setup_yougile в групповом чате команды."
         )
-        kb.row(
-            InlineKeyboardButton(text="🔄 Синхронизировать", callback_data="kanban:sync"),
-            InlineKeyboardButton(text="📈 Статистика", callback_data="kanban:stats"),
-        )
-        if is_owner:
-            kb.row(InlineKeyboardButton(text="⚙ Настройки", callback_data="kanban:settings"))
-    
+        return
+    is_admin = _is_team_admin(team, member, message.from_user.id)
     await message.answer(
-        "📊 <b>Канбан-доска</b>\n\n"
-        "Бот автоматически:\n"
-        "✅ Создаёт карточки из задач в чате\n"
-        "✅ Назначает ответственных\n"
-        "✅ Отслеживает дедлайны\n"
-        "✅ Перемещает задачи по статусам\n\n"
-        "Поддерживается: YouGile",
-        reply_markup=kb.as_markup()
+        f"📊 <b>{team.name or 'Канбан-доска'}</b>\n\nВыбери действие:",
+        reply_markup=_board_menu_markup(team.id, is_admin),
     )
+
+
+@router.message(Command("kanban"), F.chat.type == "private")
+async def cmd_kanban(message: Message):
+    """Управление канбан-доской (ЛС): одна команда — сразу меню, несколько — выбор."""
+    uid = message.from_user.id
+    async with get_session() as session:
+        teams = await get_user_teams(session, uid)
+        if not teams:
+            await message.answer("❌ У тебя нет команд. Создай или присоединись в группе")
+            return
+        if len(teams) == 1:
+            member = await get_team_member(session, teams[0].id, uid)
+            await _render_board_menu(message, teams[0], member)
+            return
+        kb = InlineKeyboardBuilder()
+        for team in teams:
+            kb.row(InlineKeyboardButton(
+                text=team.name or f"Команда #{team.id}",
+                callback_data=KanbanTeamCB(team_id=team.id, action="select").pack(),
+            ))
+        await message.answer("Выбери команду:", reply_markup=kb.as_markup())
 
 
 @router.callback_query(F.data == "kanban:board")
