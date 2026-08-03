@@ -163,6 +163,66 @@ async def cmd_kanban(message: Message):
         await message.answer("Выбери команду:", reply_markup=kb.as_markup())
 
 
+@router.callback_query(KanbanTeamCB.filter(F.action == "select"))
+async def cb_kanban_team_select(callback: CallbackQuery, callback_data: KanbanTeamCB):
+    """Меню доски выбранной команды. Guard Clause защищает от IDOR."""
+    uid = callback.from_user.id
+    async with get_session() as session:
+        member = await get_team_member(session, callback_data.team_id, uid)
+        if member is None:
+            await callback.answer("Доступ запрещен", show_alert=True)
+            return
+        team = await session.get(Team, callback_data.team_id)
+        if team is None:
+            await callback.answer("Команда не найдена", show_alert=True)
+            return
+        if not team.kanban_token:
+            await callback.message.edit_text(
+                f"❌ Канбан-доска команды «{team.name or '?'}» не настроена.\n"
+                "Попроси администратора выполнить /setup_yougile в групповом чате команды."
+            )
+            await callback.answer()
+            return
+        is_admin = _is_team_admin(team, member, uid)
+
+    await callback.message.edit_text(
+        f"📊 <b>{team.name or 'Канбан-доска'}</b>\n\nВыбери действие:",
+        reply_markup=_board_menu_markup(callback_data.team_id, is_admin),
+    )
+    await callback.answer()
+
+
+@router.callback_query(KanbanTeamCB.filter(F.action == "settings"))
+async def cb_kanban_team_settings(callback: CallbackQuery, callback_data: KanbanTeamCB):
+    """Настройки доски. Настройка выполняется админом в групповом чате команды."""
+    uid = callback.from_user.id
+    async with get_session() as session:
+        member = await get_team_member(session, callback_data.team_id, uid)
+        if member is None:
+            await callback.answer("Доступ запрещен", show_alert=True)
+            return
+        team = await session.get(Team, callback_data.team_id)
+        if team is None:
+            await callback.answer("Команда не найдена", show_alert=True)
+            return
+    if not _is_team_admin(team, member, uid):
+        await callback.answer("Доступ запрещен", show_alert=True)
+        return
+
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(
+        text="◀ К доске",
+        callback_data=KanbanTeamCB(team_id=team.id, action="select").pack(),
+    ))
+    await callback.message.edit_text(
+        "⚙️ <b>Настройки канбан</b>\n\n"
+        "Привязка и смена доски YouGile выполняются администратором "
+        "в групповом чате команды командой /setup_yougile.",
+        reply_markup=kb.as_markup(),
+    )
+    await callback.answer()
+
+
 @router.callback_query(F.data == "kanban:board")
 async def cb_kanban_board(callback: CallbackQuery):
     """Показать текущую канбан-доску"""
