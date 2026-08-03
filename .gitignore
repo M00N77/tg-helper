@@ -27,3 +27,9 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# Node deps
+node_modules/sodium-native
+
+# TLS certificates
+certificates/
