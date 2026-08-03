@@ -237,16 +237,83 @@ async def cb_kanban_team_settings(callback: CallbackQuery, callback_data: Kanban
 
     kb = InlineKeyboardBuilder()
     kb.row(InlineKeyboardButton(
+        text="🔄 Синхронизировать пользователей",
+        callback_data=KanbanTeamCB(team_id=team.id, action="sync_users").pack(),
+    ))
+    kb.row(InlineKeyboardButton(
         text="◀ К доске",
         callback_data=KanbanTeamCB(team_id=team.id, action="select").pack(),
     ))
     await callback.message.edit_text(
         "⚙️ <b>Настройки канбан</b>\n\n"
         "Привязка и смена доски YouGile выполняются администратором "
-        "в групповом чате команды командой /setup_yougile.",
+        "в групповом чате команды командой /setup_yougile.\n\n"
+        "Синхронизация сопоставляет участников команды с пользователями "
+        "YouGile по именам (без учёта регистра).",
         reply_markup=kb.as_markup(),
     )
     await callback.answer()
+
+
+def _normalize_name(name: str | None) -> str:
+    return " ".join((name or "").lower().split())
+
+
+def find_yougile_match(yg_users: list[dict], display_name: str | None) -> str | None:
+    """Ищет пользователя YouGile по имени участника (без учёта регистра).
+    Сначала точное совпадение, затем по вхождению. Возвращает yougile_user_id или None."""
+    target = _normalize_name(display_name)
+    if not target:
+        return None
+    for u in yg_users:
+        if _normalize_name(u.get("name")) == target:
+            return u["id"]
+    for u in yg_users:
+        u_name = _normalize_name(u.get("name"))
+        if u_name and (u_name in target or target in u_name):
+            return u["id"]
+    return None
+
+
+@router.callback_query(KanbanTeamCB.filter(F.action == "sync_users"))
+async def cb_kanban_sync_users(callback: CallbackQuery, callback_data: KanbanTeamCB):
+    """Синхронизация участников команды с пользователями YouGile по именам."""
+    uid = callback.from_user.id
+    async with get_session() as session:
+        team = await session.get(Team, callback_data.team_id)
+        if team is None:
+            await callback.answer("Команда не найдена", show_alert=True)
+            return
+        member = await get_team_member(session, team.id, uid)
+        if not can_manage_kanban(team, member, uid):
+            await callback.answer("⛔ Доступно только администраторам", show_alert=True)
+            return
+        token = await _decrypt_kanban_token(team)
+        members = await get_team_members(session, team.id)
+
+    if not token:
+        await callback.answer("Сначала настройте канбан-доску", show_alert=True)
+        return
+
+    try:
+        client = YouGileClient(token)
+        yg_users = await client.get_users()
+    except Exception as e:
+        await callback.answer(f"❌ Ошибка при получении списка YouGile: {e}", show_alert=True)
+        return
+
+    linked = 0
+    async with get_session() as session:
+        for m in members:
+            yg_id = find_yougile_match(yg_users, m.display_name)
+            if yg_id and m.yougile_user_id != yg_id:
+                await set_team_member_yougile_id(session, team.id, m.telegram_id, yg_id)
+                linked += 1
+
+    await callback.answer(
+        f"Синхронизация завершена. Привязано {linked} пользователей.",
+        show_alert=True,
+    )
 
 
 def _format_my_tasks(tasks: list[dict]) -> str:
