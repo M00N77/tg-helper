@@ -223,6 +223,66 @@ async def cb_kanban_team_settings(callback: CallbackQuery, callback_data: Kanban
     await callback.answer()
 
 
+def _format_my_tasks(tasks: list[dict]) -> str:
+    """Компактный текстовый список задач пользователя из YouGile."""
+    if not tasks:
+        return "📭 У тебя нет задач на доске"
+    lines = ["📋 <b>Мои задачи</b>\n"]
+    for task in tasks[:50]:
+        title = (task.get("title") or "").strip() or "(без названия)"
+        line = f"• {title}"
+        deadline_raw = task.get("deadline")
+        if isinstance(deadline_raw, dict) and deadline_raw.get("deadline"):
+            dt = datetime.fromtimestamp(deadline_raw["deadline"] / 1000)
+            line += f" — до {dt.strftime('%d.%m.%Y')}"
+        lines.append(line)
+    if len(tasks) > 50:
+        lines.append(f"\n… и ещё {len(tasks) - 50}")
+    return "\n".join(lines)
+
+
+@router.callback_query(KanbanTeamCB.filter(F.action == "my_tasks"))
+async def cb_kanban_my_tasks(callback: CallbackQuery, callback_data: KanbanTeamCB):
+    """Список задач YouGile, назначенных на пользователя. Guard Clause от IDOR."""
+    uid = callback.from_user.id
+    async with get_session() as session:
+        member = await get_team_member(session, callback_data.team_id, uid)
+        if member is None:
+            await callback.answer("Доступ запрещен", show_alert=True)
+            return
+        if not member.yougile_user_id:
+            await callback.answer(
+                "Твой Telegram не привязан к YouGile. Обратись к администратору",
+                show_alert=True,
+            )
+            return
+        team = await session.get(Team, callback_data.team_id)
+        token = await _decrypt_kanban_token(team) if team else None
+
+    if not token:
+        await callback.answer("Сначала настройте канбан-доску", show_alert=True)
+        return
+
+    try:
+        client = YouGileClient(token)
+        tasks = await client.get_tasks_by_assignee(member.yougile_user_id)
+    except Exception as e:
+        await callback.answer(f"❌ Ошибка при получении задач: {e}", show_alert=True)
+        return
+
+    text = _format_my_tasks(tasks)
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(
+        text="◀ К доске",
+        callback_data=KanbanTeamCB(team_id=callback_data.team_id, action="select").pack(),
+    ))
+    try:
+        await callback.message.edit_text(text, reply_markup=kb.as_markup())
+    except TelegramBadRequest:
+        pass
+    await callback.answer()
+
+
 @router.callback_query(F.data == "kanban:board")
 async def cb_kanban_board(callback: CallbackQuery):
     """Показать текущую канбан-доску"""
