@@ -133,7 +133,8 @@ async def _handle_record_ready(data: dict, event_id: str, record_id: str) -> Non
 
             team = meeting.team
 
-        mtslink_token = team.mtslink_token if team else None
+        from src.services.crypto_service import crypto_service
+        mtslink_token = await crypto_service.decrypt_data(team.mtslink_token, fallback_raw=True) if team else None
         if not mtslink_token:
             logger.warning("MTS Link token not found for meeting %s (team=%s)", meeting.id, team.id if team else "?")
             async with get_session() as session:

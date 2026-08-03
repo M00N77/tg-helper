@@ -11,6 +11,7 @@ from src.core.timeutil import now_in_tz
 from src.db.models import Commitment, Team
 from src.db.repo import get_or_create_user
 from src.db.session import get_session
+from src.services.crypto_service import crypto_service
 
 
 logger = logging.getLogger(__name__)
@@ -57,7 +58,8 @@ async def _get_yougile_cards() -> list[dict]:
             board_id = get_board_id(team)
             if not board_id:
                 continue
-            client = YouGileClient(team.kanban_token, board_id)
+            token = await crypto_service.decrypt_data(team.kanban_token, fallback_raw=True)
+            client = YouGileClient(token, board_id)
             columns = await client.get_columns()
             for col in columns:
                 col_cards = await client.get_cards_in_column(col["id"], limit=100)

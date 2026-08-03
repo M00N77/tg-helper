@@ -21,6 +21,7 @@ from src.db.repo import (
 from src.db.session import get_session
 from src.llm.router import get_provider_chain, llm_with_fallback
 from src.llm.base import ChatMessage
+from src.services.crypto_service import crypto_service
 from src.bot.handlers.yougile import YouGileClient
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,8 @@ async def create_yougile_tasks_from_meeting(
     if team and team.kanban_token and tasks:
         board_id = team.active_board_id or team.kanban_board_id
         if board_id:
-            client = YouGileClient(team.kanban_token, board_id)
+            token = await crypto_service.decrypt_data(team.kanban_token, fallback_raw=True)
+            client = YouGileClient(token, board_id)
             try:
                 boards_data = await client.get_boards()
                 for b in boards_data:
@@ -388,7 +390,8 @@ async def process_meeting_audio(
         if team and team.kanban_token:
             board_id = team.active_board_id or team.kanban_board_id
             if board_id:
-                client = YouGileClient(team.kanban_token, board_id)
+                token = await crypto_service.decrypt_data(team.kanban_token, fallback_raw=True)
+                client = YouGileClient(token, board_id)
                 try:
                     boards_data = await client.get_boards()
                     for b in boards_data:

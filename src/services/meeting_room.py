@@ -107,9 +107,11 @@ async def create_mtslink_room(
         if team_chat_id:
             from src.db.session import get_session
             from src.db.repo import update_team_mtslink_token
+            from src.services.crypto_service import crypto_service
 
+            encrypted_token = await crypto_service.encrypt_data(api_token)
             async with get_session() as session:
-                await update_team_mtslink_token(session, team_chat_id, api_token)
+                await update_team_mtslink_token(session, team_chat_id, encrypted_token)
             logger.info("Saved mtslink_token to team chat_id=%s", team_chat_id)
 
         return link, event_id, session_id or None

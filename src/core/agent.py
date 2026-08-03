@@ -661,6 +661,7 @@ async def process_free_text(
     from src.db.repo import get_or_create_user, get_team_by_chat
     from src.db.session import get_session
     from src.llm.router import get_provider_chain, llm_with_fallback
+    from src.services.crypto_service import crypto_service
 
     async with get_session() as session:
         owner = await get_or_create_user(session, user_id)
@@ -681,7 +682,8 @@ async def process_free_text(
     ])
 
     responses = _safe_parse_kanban(raw)
-    client = YouGileClient(team.kanban_token, board_id)
+    token = await crypto_service.decrypt_data(team.kanban_token, fallback_raw=True)
+    client = YouGileClient(token, board_id)
 
     results = []
     for response in responses:
