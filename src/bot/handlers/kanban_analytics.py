@@ -10,6 +10,7 @@ from src.db.repo import get_team_by_chat, get_or_create_user
 from src.db.session import get_session
 from src.llm.base import ChatMessage
 from src.llm.router import get_provider_chain, llm_with_fallback
+from src.services.crypto_service import crypto_service
 
 router = Router(name="kanban_analytics")
 
@@ -151,7 +152,7 @@ async def cmd_kanban_analytics(message: Message) -> None:
         await message.answer("❌ Сначала выбери доску /kanban_board")
         return
 
-    client = YouGileClient(team.kanban_token, board_id)
+    client = YouGileClient(await crypto_service.decrypt_data(team.kanban_token, fallback_raw=True), board_id)
     try:
         columns = await client.get_columns()
     except Exception as e:

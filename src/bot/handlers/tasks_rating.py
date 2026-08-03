@@ -21,6 +21,7 @@ from src.bot.filters import OwnerOrTeamMember
 from src.bot.handlers.yougile import YouGileClient, get_board_id
 from src.db.repo import get_team_by_chat, get_team_members
 from src.db.session import get_session
+from src.services.crypto_service import crypto_service
 
 logger = logging.getLogger(__name__)
 router = Router(name="tasks_rating")
@@ -69,7 +70,8 @@ async def cmd_tasks_rating(message: Message, command: CommandObject) -> None:
             name_by_yougile[m.yougile_user_id] = m.display_name or str(m.telegram_id)
 
     since_ms = NOW_MS() - days * 86400000
-    client = YouGileClient(team.kanban_token, board_id)
+    token = await crypto_service.decrypt_data(team.kanban_token, fallback_raw=True)
+    client = YouGileClient(token, board_id)
 
     try:
         columns = await client.get_columns()

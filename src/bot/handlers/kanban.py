@@ -29,10 +29,18 @@ from src.db.repo import (
     get_team_by_chat, get_team_by_owner,
 )
 from src.db.models import TeamMember
+from src.services.crypto_service import crypto_service
 from src.userbot.manager import UserbotManager
 
 
 router = Router(name="kanban")
+
+
+async def _decrypt_kanban_token(team) -> str | None:
+    """Расшифровывает токен команды (хранится зашифрованным в БД)."""
+    if team is None or not team.kanban_token:
+        return None
+    return await crypto_service.decrypt_data(team.kanban_token, fallback_raw=True)
 
 
 async def build_board_text(client: YouGileClient, board_title: str) -> str:
@@ -148,7 +156,7 @@ async def cb_kanban_board(callback: CallbackQuery):
     if not board_id:
         logger.warning("[DEBUG BOARD] board_id is None for chat_id=%s, trying auto-setup", chat_id)
         try:
-            client = YouGileClient(team.kanban_token)
+            client = YouGileClient(await _decrypt_kanban_token(team))
             boards = await client.get_boards()
             if len(boards) == 0:
                 await callback.answer("❌ В аккаунте YouGile нет досок. Создайте доску в YouGile.", show_alert=True)
@@ -171,7 +179,7 @@ async def cb_kanban_board(callback: CallbackQuery):
 
     await callback.answer()
 
-    client = YouGileClient(team.kanban_token, board_id)
+    client = YouGileClient(await _decrypt_kanban_token(team), board_id)
     text = await build_board_text(client, "Канбан-доска")
 
     kb = InlineKeyboardBuilder()
@@ -207,7 +215,7 @@ async def cb_kanban_tasks(callback: CallbackQuery):
         await callback.answer("Сначала выберите доску: /kanban_board", show_alert=True)
         return
 
-    client = YouGileClient(team.kanban_token, board_id)
+    client = YouGileClient(await _decrypt_kanban_token(team), board_id)
     try:
         columns = await client.get_columns()
         cards = await client.get_cards_in_column(column_id)
@@ -328,7 +336,8 @@ async def process_password(message: Message, state: FSMContext):
             save_chat_id = (
                 team.chat_id if team else (target_chat_id or message.chat.id)
             )
-            await update_team_kanban(session, save_chat_id, token)
+            encrypted_token = await crypto_service.encrypt_data(token)
+            await update_team_kanban(session, save_chat_id, encrypted_token)
         await wait_msg.edit_text(
             "✅ Авторизация успешна.\n\n"
             "Теперь выбери доску: /kanban_board"
@@ -362,7 +371,7 @@ async def cmd_kanban_board(message: Message, state: FSMContext):
         if len(board_id) < 10:
             await message.answer("⚠️ Некорректный ID доски. Используй /kanban_board без аргумента для выбора из списка.")
             return
-        client = YouGileClient(team.kanban_token, board_id)
+        client = YouGileClient(await _decrypt_kanban_token(team), board_id)
         try:
             boards = await client.get_boards()
         except Exception:
@@ -377,7 +386,7 @@ async def cmd_kanban_board(message: Message, state: FSMContext):
         return
 
     # Нет аргумента — получаем список досок
-    client = YouGileClient(team.kanban_token, board_id="")
+    client = YouGileClient(await _decrypt_kanban_token(team), board_id="")
     try:
         boards = await client.get_boards()
     except Exception as e:
@@ -440,7 +449,7 @@ async def cb_set_board(callback: CallbackQuery, state: FSMContext):
 
     async with get_session() as session:
         team = await get_team_for_event(session, callback)
-        token = team.kanban_token if team else None
+        token = await _decrypt_kanban_token(team)
         await set_active_board(session, team.chat_id if team else callback.message.chat.id, board_id, board_name)
 
     pending_tasks = data.get("pending_tasks")
@@ -512,7 +521,7 @@ async def cb_kanban_add(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
     await state.update_data(
-        kanban_token=team.kanban_token,
+        kanban_token=await _decrypt_kanban_token(team),
         kanban_board_id=board_id,
     )
     await state.set_state(KanbanCardStates.waiting_title)
@@ -678,7 +687,7 @@ async def cb_kanban_sync(callback: CallbackQuery):
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
 
-    client = YouGileClient(team.kanban_token, board_id)
+    client = YouGileClient(await _decrypt_kanban_token(team), board_id)
 
     try:
         text = await build_board_text(client, "Канбан-доска")
@@ -709,7 +718,7 @@ async def cb_kanban_stats(callback: CallbackQuery):
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
 
-    client = YouGileClient(team.kanban_token, board_id)
+    client = YouGileClient(await _decrypt_kanban_token(team), board_id)
 
     try:
         columns = await client.get_columns()
@@ -784,7 +793,7 @@ async def cb_kanban_change_board(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
 
-    client = YouGileClient(team.kanban_token, board_id)
+    client = YouGileClient(await _decrypt_kanban_token(team), board_id)
 
     parts = callback.data.split(":")
     task_id = parts[2]
@@ -865,7 +874,7 @@ async def cb_kanban_link_user(callback: CallbackQuery):
     if not team or not team.kanban_token or not board_id:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
-    client = YouGileClient(team.kanban_token, board_id)
+    client = YouGileClient(await _decrypt_kanban_token(team), board_id)
 
     try:
         yg_users = await client.get_users()
@@ -949,7 +958,7 @@ async def cb_kanban_deadline(callback: CallbackQuery, state: FSMContext):
 
     await state.update_data(
         kanban_task_id=task_id,
-        kanban_token=team.kanban_token,
+        kanban_token=await _decrypt_kanban_token(team),
         kanban_board_id=board_id,
     )
     await state.set_state(KanbanCardStates.setting_deadline)

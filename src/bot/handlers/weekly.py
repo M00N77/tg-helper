@@ -8,6 +8,7 @@ from src.bot.filters import OwnerOrTeamMember
 from src.bot.handlers.yougile import YouGileClient, get_board_id
 from src.db.repo import get_team_by_chat, get_or_create_user, list_open_commitments
 from src.db.session import get_session
+from src.services.crypto_service import crypto_service
 
 router = Router(name="weekly")
 router.message.filter(OwnerOrTeamMember())
@@ -46,7 +47,8 @@ async def cmd_weekly(message: Message) -> None:
             lines.append("📊 Канбан: доска не выбрана\n")
         else:
             try:
-                client = YouGileClient(team.kanban_token, board_id)
+                token = await crypto_service.decrypt_data(team.kanban_token, fallback_raw=True)
+                client = YouGileClient(token, board_id)
                 columns = await client.get_columns()
 
                 new_this_week = 0

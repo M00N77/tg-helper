@@ -45,6 +45,7 @@ from src.db.repo import (
     upsert_contact,
 )
 from src.db.session import get_session
+from src.services.crypto_service import crypto_service
 from src.bot.lexicon import L
 from src.bot.states import TaskCreationStates
 from src.llm.router import get_provider_chain
@@ -234,7 +235,7 @@ async def _exec_kanban_intent(intent: dict, message: Message) -> None:
         )
         return
 
-    client = YouGileClient(team.kanban_token, board_id)
+    client = YouGileClient(await crypto_service.decrypt_data(team.kanban_token, fallback_raw=True), board_id)
 
     def _get(key: str, default: str = "") -> str:
         val = intent.get(key) or intent.get("parameters", {}).get(key) or default
@@ -293,7 +294,7 @@ async def _exec_kanban_intent(intent: dict, message: Message) -> None:
                         "column_id": column_id,
                         "deadline": deadline_raw,
                         "team_id": team.id,
-                        "kanban_token": team.kanban_token,
+                        "kanban_token": await crypto_service.decrypt_data(team.kanban_token, fallback_raw=True),
                         "board_id": board_id,
                         "users": users,
                         "original_name": assignee_name,
@@ -585,7 +586,7 @@ async def _execute_intent(intent, message, state, userbot_manager, *, tz_name: s
             return
 
         from src.bot.handlers.yougile import YouGileClient
-        client_yg = YouGileClient(team.kanban_token, board_id)
+        client_yg = YouGileClient(await crypto_service.decrypt_data(team.kanban_token, fallback_raw=True), board_id)
 
         try:
             columns = await client_yg.get_columns()
@@ -805,7 +806,7 @@ async def _execute_intent(intent, message, state, userbot_manager, *, tz_name: s
             return
 
         from src.bot.handlers.yougile import YouGileClient
-        client_yg = YouGileClient(team.kanban_token, board_id)
+        client_yg = YouGileClient(await crypto_service.decrypt_data(team.kanban_token, fallback_raw=True), board_id)
 
         try:
             columns = await client_yg.get_columns()
@@ -1376,7 +1377,7 @@ async def free_voice(
             return
 
         from src.bot.handlers.yougile import YouGileClient
-        client = YouGileClient(team.kanban_token)
+        client = YouGileClient(await crypto_service.decrypt_data(team.kanban_token, fallback_raw=True))
         try:
             boards = await client.get_boards()
         except Exception as e:
@@ -1919,7 +1920,7 @@ async def cb_voice_board_select(callback: CallbackQuery, state: FSMContext) -> N
 
     from src.bot.handlers.yougile import YouGileClient
 
-    client = YouGileClient(team.kanban_token, board_id)
+    client = YouGileClient(await crypto_service.decrypt_data(team.kanban_token, fallback_raw=True), board_id)
     try:
         columns = await client.get_columns()
     except Exception as e:
