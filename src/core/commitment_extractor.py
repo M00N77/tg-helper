@@ -10,6 +10,7 @@ from src.db.repo import add_commitment
 from src.db.session import get_session
 from src.llm.base import ChatMessage, LLMProvider
 from src.llm.router import llm_with_fallback
+from src.services.crypto_service import crypto_service
 
 
 logger = logging.getLogger(__name__)
@@ -117,7 +118,8 @@ async def extract_and_save_commitments(
                         board_id = get_board_id(team)
                         if not board_id:
                             continue
-                        _client = YouGileClient(team.kanban_token, board_id)
+                        token = await crypto_service.decrypt_data(team.kanban_token, fallback_raw=True)
+                        _client = YouGileClient(token, board_id)
                         columns = await _client.get_columns()
                         if columns:
                             col_id = columns[0]["id"]
