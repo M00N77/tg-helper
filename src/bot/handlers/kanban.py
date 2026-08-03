@@ -3,6 +3,7 @@ import logging
 from datetime import datetime
 from aiogram import Router, F
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.filters.callback_data import CallbackData
 
 logger = logging.getLogger(__name__)
 from aiogram.filters import Command
@@ -34,6 +35,12 @@ from src.userbot.manager import UserbotManager
 
 
 router = Router(name="kanban")
+
+
+class KanbanTeamCB(CallbackData, prefix="kb_team"):
+    """Callback для работы с канбан-досками команд в ЛС (строгий стейт-менеджмент)."""
+    team_id: int
+    action: str
 
 
 async def _decrypt_kanban_token(team) -> str | None:
