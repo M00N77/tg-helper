@@ -21,7 +21,7 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     op.create_table(
         "team_dictionaries",
-        sa.Column("id", sa.BigInteger(), autoincrement=True, nullable=False),
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("team_id", sa.BigInteger(), nullable=False),
         sa.Column("term", sa.String(length=256), nullable=False),
         sa.Column("definition", sa.Text(), nullable=False),

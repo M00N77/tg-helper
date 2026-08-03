@@ -29,14 +29,14 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('file_id')
     )
     op.create_table('users',
-    sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
+    sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('telegram_id', sa.BigInteger(), nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_users_telegram_id'), 'users', ['telegram_id'], unique=True)
     op.create_table('api_keys',
-    sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
+    sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('user_id', sa.BigInteger(), nullable=False),
     sa.Column('provider', sa.String(length=16), nullable=False),
     sa.Column('key_enc', sa.Text(), nullable=False),
@@ -45,7 +45,7 @@ def upgrade() -> None:
     sa.UniqueConstraint('user_id', 'provider', name='uq_api_key_user_provider')
     )
     op.create_table('auto_reply_logs',
-    sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
+    sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('user_id', sa.BigInteger(), nullable=False),
     sa.Column('peer_id', sa.BigInteger(), nullable=False),
     sa.Column('peer_name', sa.String(length=256), nullable=True),
@@ -59,7 +59,7 @@ def upgrade() -> None:
     op.create_index(op.f('ix_auto_reply_logs_peer_id'), 'auto_reply_logs', ['peer_id'], unique=False)
     op.create_index(op.f('ix_auto_reply_logs_user_id'), 'auto_reply_logs', ['user_id'], unique=False)
     op.create_table('commitments',
-    sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
+    sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('user_id', sa.BigInteger(), nullable=False),
     sa.Column('peer_id', sa.BigInteger(), nullable=False),
     sa.Column('peer_name', sa.String(length=256), nullable=True),
@@ -75,7 +75,7 @@ def upgrade() -> None:
     op.create_index(op.f('ix_commitments_peer_id'), 'commitments', ['peer_id'], unique=False)
     op.create_index(op.f('ix_commitments_user_id'), 'commitments', ['user_id'], unique=False)
     op.create_table('contacts',
-    sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
+    sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('user_id', sa.BigInteger(), nullable=False),
     sa.Column('peer_id', sa.BigInteger(), nullable=False),
     sa.Column('peer_kind', sa.String(length=16), nullable=False),
@@ -95,7 +95,7 @@ def upgrade() -> None:
     op.create_index(op.f('ix_contacts_peer_id'), 'contacts', ['peer_id'], unique=False)
     op.create_index(op.f('ix_contacts_user_id'), 'contacts', ['user_id'], unique=False)
     op.create_table('index_jobs',
-    sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
+    sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('user_id', sa.BigInteger(), nullable=False),
     sa.Column('peer_id', sa.BigInteger(), nullable=False),
     sa.Column('last_indexed_message_id', sa.BigInteger(), nullable=False),
@@ -107,7 +107,7 @@ def upgrade() -> None:
     op.create_index(op.f('ix_index_jobs_peer_id'), 'index_jobs', ['peer_id'], unique=False)
     op.create_index(op.f('ix_index_jobs_user_id'), 'index_jobs', ['user_id'], unique=False)
     op.create_table('messages',
-    sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
+    sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('user_id', sa.BigInteger(), nullable=False),
     sa.Column('peer_id', sa.BigInteger(), nullable=False),
     sa.Column('message_id', sa.BigInteger(), nullable=False),
@@ -130,7 +130,7 @@ def upgrade() -> None:
     op.create_index(op.f('ix_messages_user_id'), 'messages', ['user_id'], unique=False)
     op.create_index('ix_messages_user_peer_date', 'messages', ['user_id', 'peer_id', 'date'], unique=False)
     op.create_table('news_topics',
-    sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
+    sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('user_id', sa.BigInteger(), nullable=False),
     sa.Column('topic', sa.String(length=256), nullable=False),
     sa.Column('hours', sa.Integer(), nullable=False),
@@ -141,7 +141,7 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_news_topics_user_id'), 'news_topics', ['user_id'], unique=False)
     op.create_table('pending_actions',
-    sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
+    sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('user_id', sa.BigInteger(), nullable=False),
     sa.Column('kind', sa.String(length=32), nullable=False),
     sa.Column('payload', sa.JSON(), nullable=False),

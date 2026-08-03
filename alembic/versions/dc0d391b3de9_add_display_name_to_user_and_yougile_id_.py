@@ -25,7 +25,8 @@ def upgrade() -> None:
     op.add_column('team_members', sa.Column('yougile_user_id', sa.String(length=128), nullable=True))
     op.add_column('users', sa.Column('display_name', sa.String(length=128), nullable=True))
     op.execute("UPDATE users SET display_name = '' WHERE display_name IS NULL")
-    op.alter_column('users', 'display_name', nullable=False, server_default='')
+    with op.batch_alter_table('users') as batch_op:
+        batch_op.alter_column('display_name', nullable=False, server_default='')
     # ### end Alembic commands ###
 
 
@@ -36,3 +37,4 @@ def downgrade() -> None:
     op.drop_column('team_members', 'yougile_user_id')
     op.create_index(op.f('ix_meetings_mtslink_record_id'), 'meetings', ['mtslink_record_id'], unique=False)
     # ### end Alembic commands ###
+

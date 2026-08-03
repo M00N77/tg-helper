@@ -21,17 +21,19 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Upgrade schema."""
     # ── teams: расписание групповых активностей ──
-    op.add_column('teams', sa.Column('activities_enabled', sa.Boolean(), nullable=True))
-    op.add_column('teams', sa.Column('pulse_time', sa.String(length=5), nullable=True))
+    with op.batch_alter_table('teams') as batch_op:
+        batch_op.add_column(sa.Column('activities_enabled', sa.Boolean(), nullable=True))
+        batch_op.add_column(sa.Column('pulse_time', sa.String(length=5), nullable=True))
     op.execute("UPDATE teams SET activities_enabled = false WHERE activities_enabled IS NULL")
     op.execute("UPDATE teams SET pulse_time = '17:00' WHERE pulse_time IS NULL")
-    op.alter_column('teams', 'activities_enabled', nullable=False)
-    op.alter_column('teams', 'pulse_time', nullable=False)
+    with op.batch_alter_table('teams') as batch_op:
+        batch_op.alter_column('activities_enabled', nullable=False)
+        batch_op.alter_column('pulse_time', nullable=False)
 
     # ── activity_sessions ──
     op.create_table(
         'activity_sessions',
-        sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
+        sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
         sa.Column('team_id', sa.BigInteger(), nullable=False),
         sa.Column('activity_code', sa.String(length=64), nullable=False),
         sa.Column('kind', sa.String(length=32), nullable=False),
@@ -53,7 +55,7 @@ def upgrade() -> None:
     # ── activity_responses ──
     op.create_table(
         'activity_responses',
-        sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
+        sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
         sa.Column('session_id', sa.BigInteger(), nullable=False),
         sa.Column('respondent_hash', sa.String(length=64), nullable=False),
         sa.Column('user_id', sa.BigInteger(), nullable=True),

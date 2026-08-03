@@ -20,16 +20,21 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-    op.add_column('teams', sa.Column('pulse_auto_close_minutes', sa.Integer(), nullable=True))
+    with op.batch_alter_table('teams') as batch_op:
+        batch_op.add_column(sa.Column('pulse_auto_close_minutes', sa.Integer(), nullable=True))
     op.execute("UPDATE teams SET pulse_auto_close_minutes = 60 WHERE pulse_auto_close_minutes IS NULL")
-    op.alter_column('teams', 'pulse_auto_close_minutes', nullable=False)
+    with op.batch_alter_table('teams') as batch_op:
+        batch_op.alter_column('pulse_auto_close_minutes', nullable=False)
 
-    op.add_column('activity_sessions', sa.Column('summary_posted', sa.Boolean(), nullable=True))
+    with op.batch_alter_table('activity_sessions') as batch_op:
+        batch_op.add_column(sa.Column('summary_posted', sa.Boolean(), nullable=True))
     op.execute("UPDATE activity_sessions SET summary_posted = false WHERE summary_posted IS NULL")
-    op.alter_column('activity_sessions', 'summary_posted', nullable=False)
+    with op.batch_alter_table('activity_sessions') as batch_op:
+        batch_op.alter_column('summary_posted', nullable=False)
 
 
 def downgrade() -> None:
     """Downgrade schema."""
     op.drop_column('activity_sessions', 'summary_posted')
     op.drop_column('teams', 'pulse_auto_close_minutes')
+

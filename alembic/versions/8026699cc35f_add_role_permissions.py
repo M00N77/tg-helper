@@ -26,7 +26,7 @@ def upgrade() -> None:
     _taskstatus_enum.create(op.get_bind())
 
     op.create_table('role_permissions',
-    sa.Column('id', sa.BigInteger(), autoincrement=True, nullable=False),
+    sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('team_id', sa.BigInteger(), nullable=False),
     sa.Column('role', sa.String(length=32), nullable=False),
     sa.Column('allowed_intents', sa.JSON(), nullable=False),
@@ -37,11 +37,13 @@ def upgrade() -> None:
     )
     op.create_index(op.f('ix_role_permissions_team_id'), 'role_permissions', ['team_id'], unique=False)
     op.add_column('pending_team_tasks', sa.Column('telegram_trigger_id', sa.String(length=64), nullable=True))
-    op.alter_column('pending_team_tasks', 'status',
-               existing_type=sa.VARCHAR(length=16),
-               type_=_taskstatus_enum,
-               existing_nullable=False,
-               postgresql_using='status::text::taskstatus')
+    with op.batch_alter_table('pending_team_tasks') as batch_op:
+        batch_op.alter_column('status',
+                   existing_type=sa.VARCHAR(length=16),
+                   type_=_taskstatus_enum,
+                   existing_nullable=False,
+                   postgresql_using='status::text::taskstatus')
+
     op.add_column('teams', sa.Column('is_supergroup', sa.Boolean(), nullable=False, server_default=sa.text('false')))
     op.add_column('teams', sa.Column('thread_id', sa.BigInteger(), nullable=True))
 
