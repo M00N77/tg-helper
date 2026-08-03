@@ -35,6 +35,7 @@ from src.db.repo import (
     delete_pending_action,
 )
 from src.db.session import get_session
+from src.services.crypto_service import crypto_service
 from src.core.meeting_processor import (
     process_meeting_audio,
     create_yougile_tasks_from_meeting,
@@ -239,7 +240,8 @@ async def cb_meeting_yougile(callback: CallbackQuery):
         await callback.answer("Сначала выбери доску /kanban_board", show_alert=True)
         return
     from src.bot.handlers.yougile import YouGileClient
-    client = YouGileClient(team.kanban_token, board_id)
+    token = await crypto_service.decrypt_data(team.kanban_token, fallback_raw=True)
+    client = YouGileClient(token, board_id)
     text = await build_board_text(client, "📊 Доска")
     await callback.message.answer(text, parse_mode="HTML")
     await callback.answer()

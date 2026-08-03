@@ -20,6 +20,7 @@ from src.db.repo import (
 )
 from src.bot.handlers.yougile import get_board_id
 from src.db.session import get_session
+from src.services.crypto_service import crypto_service
 from src.userbot.manager import UserbotManager
 
 
@@ -245,7 +246,8 @@ async def cb_menu_kanban(callback: CallbackQuery, state: FSMContext) -> None:
         return
 
     from src.bot.handlers.yougile import YouGileClient
-    client = YouGileClient(team.kanban_token, board_id)
+    token = await crypto_service.decrypt_data(team.kanban_token, fallback_raw=True)
+    client = YouGileClient(token, board_id)
     try:
         boards = await client.get_boards()
     except Exception as e:
@@ -300,7 +302,8 @@ async def cb_menu_kanban_open(callback: CallbackQuery) -> None:
         team = await get_team_for_event(session, callback)
     from src.bot.handlers.kanban import build_board_text
     from src.bot.handlers.yougile import YouGileClient
-    client = YouGileClient(team.kanban_token, board_id)
+    token = await crypto_service.decrypt_data(team.kanban_token, fallback_raw=True)
+    client = YouGileClient(token, board_id)
     try:
         columns = await client.get_columns()
         text = await build_board_text(client, "📊 Доска")

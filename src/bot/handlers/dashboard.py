@@ -19,6 +19,7 @@ from src.db.repo import (
 from src.db.session import get_session
 from src.llm.base import ChatMessage
 from src.llm.router import build_provider
+from src.services.crypto_service import crypto_service
 
 router = Router(name="dashboard")
 router.message.filter(OwnerOrTeamMember())
@@ -98,7 +99,8 @@ async def cmd_pm_dashboard(message: Message) -> None:
     throughput = 0
     if team.kanban_token and get_board_id(team):
         try:
-            client = YouGileClient(team.kanban_token, get_board_id(team))
+            token = await crypto_service.decrypt_data(team.kanban_token, fallback_raw=True)
+            client = YouGileClient(token, get_board_id(team))
             columns = await client.get_columns()
             now_ms = NOW_MS()
             week_ms = int(week_ago.timestamp() * 1000)
@@ -175,7 +177,8 @@ async def cmd_dashboard(message: Message) -> None:
 
     if team and team.kanban_token and get_board_id(team):
         try:
-            client = YouGileClient(team.kanban_token, get_board_id(team))
+            token = await crypto_service.decrypt_data(team.kanban_token, fallback_raw=True)
+            client = YouGileClient(token, get_board_id(team))
             columns = await client.get_columns()
             now = NOW_MS()
             total = 0
