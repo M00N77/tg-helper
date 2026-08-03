@@ -15,6 +15,7 @@ from src.db.repo import (
     reject_pending_team_task,
 )
 from src.db.session import get_session
+from src.services.crypto_service import crypto_service
 
 logger = logging.getLogger(__name__)
 router = Router(name="group_tasks")
@@ -64,7 +65,8 @@ async def cb_task_confirm(callback: CallbackQuery) -> None:
 
         columns = []
         board_id = get_board_id(team)
-        client = YouGileClient(team.kanban_token, board_id)
+        token = await crypto_service.decrypt_data(team.kanban_token, fallback_raw=True)
+        client = YouGileClient(token, board_id)
         try:
             columns = await client.get_columns()
         except Exception as e:
