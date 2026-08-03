@@ -24,7 +24,6 @@ from src.bot.states import KanbanAuthStates, KanbanCardStates
 
 from src.bot.handlers.yougile import YouGileClient, _parse_deadline, get_board_id
 from sqlalchemy import select
-from src.config import settings
 from src.db.session import get_session
 from src.db.repo import (
     set_active_board, update_team_kanban,
