@@ -27,6 +27,7 @@ from src.db.repo import (
 from src.db.session import get_session
 from src.group_bot.filters import GroupOnly
 from src.group_bot.permissions import is_admin
+from src.services.crypto_service import crypto_service
 from src.bot.handlers.yougile import YouGileClient, get_board_id
 from src.llm.router import get_provider_chain
 import json
@@ -39,6 +40,13 @@ logger = logging.getLogger(__name__)
 # Временное хранилище задач, ожидающих выбора исполнителя
 # ключ: message_id сообщения с кнопками, значение: dict с данными задачи
 _pending_task_selection: dict[int, dict] = {}
+
+
+async def _decrypt_kanban_token(team) -> str | None:
+    """Расшифровывает токен команды (хранится зашифрованным в БД)."""
+    if team is None or not team.kanban_token:
+        return None
+    return await crypto_service.decrypt_data(team.kanban_token, fallback_raw=True)
 
 router = Router(name="group_free_text")
 router.message.filter(GroupOnly())
@@ -85,7 +93,7 @@ async def _create_kanban_task(
         return
 
     # Исполнитель найден — создаём задачу сразу
-    client = YouGileClient(team.kanban_token, board_id)
+    client = YouGileClient(await _decrypt_kanban_token(team), board_id)
     try:
         columns = await client.get_columns()
         if not columns:
@@ -153,7 +161,7 @@ async def on_pick_assignee(callback: CallbackQuery) -> None:
 
     if not target.yougile_user_id:
         try:
-            client = YouGileClient(team.kanban_token, board_id)
+            client = YouGileClient(await _decrypt_kanban_token(team), board_id)
             users = await client.get_users()
         except Exception:
             users = []
@@ -173,7 +181,7 @@ async def on_pick_assignee(callback: CallbackQuery) -> None:
             )
             return
 
-    client = YouGileClient(team.kanban_token, board_id)
+    client = YouGileClient(await _decrypt_kanban_token(team), board_id)
     try:
         columns = await client.get_columns()
         if not columns:
@@ -288,7 +296,7 @@ async def _handle_show_my_tasks(message: Message, team, member) -> None:
         await message.reply("📊 Канбан команды не настроен. Обратитесь к директору.")
         return
 
-    client = YouGileClient(team.kanban_token, board_id)
+    client = YouGileClient(await _decrypt_kanban_token(team), board_id)
     try:
         columns = await client.get_columns()
     except Exception as e:
@@ -383,7 +391,7 @@ async def _handle_edit_task(message: Message, team, member, intent: dict) -> Non
         await message.reply("📊 Канбан команды не настроен.")
         return
 
-    client = YouGileClient(team.kanban_token, board_id)
+    client = YouGileClient(await _decrypt_kanban_token(team), board_id)
     task = await _find_task_by_title(client, title_hint)
     if not task:
         await message.reply(f"❓ Не нашёл задачу «{title_hint}» на доске.")
@@ -430,7 +438,7 @@ async def _handle_transfer_deadline(message: Message, team, member, intent: dict
         await message.reply("📊 Канбан команды не настроен.")
         return
 
-    client = YouGileClient(team.kanban_token, board_id)
+    client = YouGileClient(await _decrypt_kanban_token(team), board_id)
     task = await _find_task_by_title(client, title_hint)
     if not task:
         await message.reply(f"❓ Не нашёл задачу «{title_hint}» на доске.")
@@ -474,7 +482,7 @@ async def _handle_change_assignee(message: Message, team, member, intent: dict) 
         return
 
     # Ищем исполнителя в YouGile (не в TeamMember)
-    client = YouGileClient(team.kanban_token, board_id)
+    client = YouGileClient(await _decrypt_kanban_token(team), board_id)
     try:
         users = await client.get_users()
     except Exception as e:
@@ -551,7 +559,7 @@ async def _handle_close_task(message: Message, team, member, intent: dict) -> No
         await message.reply("📊 Канбан команды не настроен.")
         return
 
-    client = YouGileClient(team.kanban_token, board_id)
+    client = YouGileClient(await _decrypt_kanban_token(team), board_id)
     task = await _find_task_by_title(client, title_hint)
     if not task:
         await message.reply(f"❓ Не нашёл задачу «{title_hint}» на доске.")
@@ -593,7 +601,7 @@ async def _handle_comment_task(message: Message, team, member, intent: dict) -> 
         await message.reply("📊 Канбан команды не настроен.")
         return
 
-    client = YouGileClient(team.kanban_token, board_id)
+    client = YouGileClient(await _decrypt_kanban_token(team), board_id)
     task = await _find_task_by_title(client, title_hint)
     if not task:
         await message.reply(f"❓ Не нашёл задачу «{title_hint}» на доске.")
@@ -951,7 +959,7 @@ async def cb_yg_group_assign(callback: CallbackQuery) -> None:
     assignee_ids = [yougile_user_id] if yougile_user_id else []
 
     try:
-        client = YouGileClient(team.kanban_token, board_id)
+        client = YouGileClient(await _decrypt_kanban_token(team), board_id)
         columns = await client.get_columns()
         if not columns:
             await callback.message.edit_text("❌ На доске нет колонок.")

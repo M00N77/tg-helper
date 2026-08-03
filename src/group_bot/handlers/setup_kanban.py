@@ -12,6 +12,7 @@ from src.db.repo import get_team_by_chat, update_team_kanban
 from src.db.session import get_session
 from src.group_bot.filters import GroupOnly
 from src.group_bot.permissions import is_admin, get_role
+from src.services.crypto_service import crypto_service
 
 logger = logging.getLogger(__name__)
 router = Router(name="group_setup_kanban")
@@ -184,8 +185,9 @@ async def cmd_kanban_token(message: Message, state: FSMContext):
     finally:
         await client.close()
 
+    encrypted_token = await crypto_service.encrypt_data(token)
     async with get_session() as session:
-        await update_team_kanban(session, chat_id, token, board_id, "yougile")
+        await update_team_kanban(session, chat_id, encrypted_token, board_id, "yougile")
 
     if board_id:
         await message.answer("✅ Канбан подключён! Токен и доска сохранены.")
@@ -246,8 +248,9 @@ async def step_password(message: Message, state: FSMContext):
 
     chat_id = message.chat.id
 
+    encrypted_token = await crypto_service.encrypt_data(token)
     async with get_session() as session:
-        await update_team_kanban(session, chat_id, token, None, "yougile")
+        await update_team_kanban(session, chat_id, encrypted_token, None, "yougile")
 
     await state.clear()
     await wait_msg.edit_text(
@@ -288,7 +291,8 @@ async def cmd_kanban_board(message: Message):
             return
 
         board_id = parts[1].strip()
-        client = YouGileClient(team.kanban_token, board_id)
+        token = await crypto_service.decrypt_data(team.kanban_token, fallback_raw=True)
+        client = YouGileClient(token, board_id)
         try:
             columns = await client.get_columns()
         except Exception as e:
@@ -316,7 +320,8 @@ async def cmd_kanban_board(message: Message):
         return
 
     # Показываем информацию о текущей доске
-    client = YouGileClient(team.kanban_token, board_id)
+    token = await crypto_service.decrypt_data(team.kanban_token, fallback_raw=True)
+    client = YouGileClient(token, board_id)
     try:
         columns = await client.get_columns()
         text = f"📊 <b>Канбан-доска команды</b>\n\n"

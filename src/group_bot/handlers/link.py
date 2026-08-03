@@ -13,6 +13,7 @@ from src.db.repo import (
     set_team_member_yougile_id,
 )
 from src.db.session import get_session
+from src.services.crypto_service import crypto_service
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,8 @@ def _register_handlers(router: Router) -> None:
                 await message.answer("📊 Канбан команды не настроен. Сначала настройте токен доски.")
                 return
 
-            client = YouGileClient(team.kanban_token)
+            token = await crypto_service.decrypt_data(team.kanban_token, fallback_raw=True)
+            client = YouGileClient(token)
             try:
                 users = await client.get_users()
             except Exception as e:
@@ -106,7 +108,8 @@ def _register_handlers(router: Router) -> None:
                 await callback.answer("Канбан не настроен", show_alert=True)
                 return
 
-            client = YouGileClient(team.kanban_token)
+            token = await crypto_service.decrypt_data(team.kanban_token, fallback_raw=True)
+            client = YouGileClient(token)
             try:
                 users = await client.get_users()
             except Exception as e:
