@@ -1121,6 +1121,11 @@ async def update_team_kanban(
     board_id: str = "",
     provider: str = "yougile",
 ) -> Team:
+    """Сохраняет токен и доску YouGile для команды.
+
+    Токен должен быть уже зашифрованным (CryptoService.encrypt_data):
+    репозиторий хранит строку как есть, шифрование — на уровне бизнес-логики.
+    """
     team = await get_team_by_chat(session, chat_id)
     if team is None:
         team = Team(chat_id=chat_id)
@@ -1345,6 +1350,11 @@ async def update_team_mtslink_token(
     chat_id: int,
     token: str,
 ) -> None:
+    """Сохраняет МТС Линк токен для команды.
+
+    Токен должен быть уже зашифрованным (CryptoService.encrypt_data):
+    репозиторий хранит строку как есть, шифрование — на уровне бизнес-логики.
+    """
     team = await get_team_by_chat(session, chat_id)
     if team is None:
         return
