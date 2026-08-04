@@ -50,7 +50,8 @@ async def _check_warnings(telegram_id: int, userbot_manager: UserbotManager) -> 
 
 
 @router.message(Command("menu"))
-async def cmd_menu(message: Message, userbot_manager: UserbotManager) -> None:
+async def cmd_menu(message: Message, userbot_manager: UserbotManager, state: FSMContext) -> None:
+    await state.clear()
     warnings = await _check_warnings(message.from_user.id, userbot_manager)
     text = "👋 Привет! Выбери раздел:"
     if warnings:
@@ -72,7 +73,8 @@ async def cmd_menu(message: Message, userbot_manager: UserbotManager) -> None:
 
 
 @router.callback_query(F.data == "menu:back")
-async def cb_menu_back(callback: CallbackQuery, userbot_manager: UserbotManager) -> None:
+async def cb_menu_back(callback: CallbackQuery, userbot_manager: UserbotManager, state: FSMContext) -> None:
+    await state.clear()
     warnings = await _check_warnings(callback.from_user.id, userbot_manager)
     text = "👋 Привет! Выбери раздел:"
     if warnings:

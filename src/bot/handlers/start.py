@@ -21,6 +21,7 @@ router = Router(name="start")
 
 @router.message(Command("start", "help"))
 async def cmd_start(message: Message, userbot_manager: UserbotManager, state: FSMContext, command: CommandObject | None = None) -> None:
+    await state.clear()
     uid = message.from_user.id
     username = (message.from_user.username or "").lower()
     is_owner = uid == settings.owner_telegram_id
@@ -94,7 +95,7 @@ async def cmd_start(message: Message, userbot_manager: UserbotManager, state: FS
                 return
 
     if is_owner:
-        await cmd_menu(message, userbot_manager)
+        await cmd_menu(message, userbot_manager, state)
     else:
         await message.answer(L.ONBOARDING_DONE.format(name=user.display_name))
 
