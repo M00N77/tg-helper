@@ -21,7 +21,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from src.bot.filters import get_team_for_event
 from src.bot.states import KanbanAuthStates, KanbanCardStates
-from src.bot.fsm_utils import require_text
+from src.bot.fsm_utils import require_text, enter_state
 
 from src.bot.handlers.yougile import YouGileClient, _parse_deadline, get_board_id
 from sqlalchemy import select
@@ -779,11 +779,12 @@ async def cb_kanban_add(callback: CallbackQuery, state: FSMContext):
     if not team or not team.kanban_token or not board_id:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
-    await state.update_data(
-        kanban_token=await _decrypt_kanban_token(team),
-        kanban_board_id=board_id,
-    )
-    await state.set_state(KanbanCardStates.waiting_title)
+    data = {
+        "kanban_token": await _decrypt_kanban_token(team),
+        "kanban_board_id": board_id,
+    }
+    if not await enter_state(KanbanCardStates.waiting_title, state, callback, extra_data=data):
+        return
     kb = ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text="❌ Отмена")]],
         resize_keyboard=True,
@@ -1227,12 +1228,17 @@ async def cb_kanban_deadline(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
 
-    await state.update_data(
-        kanban_task_id=task_id,
-        kanban_token=await _decrypt_kanban_token(team),
-        kanban_board_id=board_id,
-    )
-    await state.set_state(KanbanCardStates.setting_deadline)
+    if not await enter_state(
+        KanbanCardStates.setting_deadline,
+        state,
+        callback,
+        extra_data={
+            "kanban_task_id": task_id,
+            "kanban_token": await _decrypt_kanban_token(team),
+            "kanban_board_id": board_id,
+        },
+    ):
+        return
     await callback.message.answer(
         "📅 <b>Введи дедлайн</b>\n\n"
         "Формат: ДД.ММ.ГГГГ (например 25.12.2026)\n"

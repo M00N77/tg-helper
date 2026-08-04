@@ -49,7 +49,7 @@ from src.core.meeting_processor import (
     format_task_line,
 )
 from src.bot.states import MeetingStates
-from src.bot.fsm_utils import require_text
+from src.bot.fsm_utils import require_text, enter_state
 from src.config import settings as app_settings
 from src.db.models import Team
 from src.userbot.manager import UserbotManager
@@ -458,8 +458,13 @@ async def cb_mtask_edit(callback: CallbackQuery, state: FSMContext) -> None:
             return
         current = format_task_line(tasks[task_idx])
 
-    await state.set_state(MeetingStates.waiting_task_edit)
-    await state.update_data(action_id=action_id, task_idx=task_idx)
+    if not await enter_state(
+        MeetingStates.waiting_task_edit,
+        state,
+        callback,
+        extra_data={"action_id": action_id, "task_idx": task_idx},
+    ):
+        return
     await callback.message.edit_text(
         f"✏️ <b>Изменение задачи {task_idx + 1}</b>\n\n"
         f"Текущая: {current}\n\n"
@@ -480,8 +485,13 @@ async def cb_mtask_add(callback: CallbackQuery, state: FSMContext) -> None:
             await callback.answer("Действие устарело", show_alert=True)
             return
 
-    await state.set_state(MeetingStates.waiting_task_add)
-    await state.update_data(action_id=action_id)
+    if not await enter_state(
+        MeetingStates.waiting_task_add,
+        state,
+        callback,
+        extra_data={"action_id": action_id},
+    ):
+        return
     await callback.message.edit_text(
         "➕ <b>Новая задача</b>\n\n"
         "Пришли текст в формате:\n"
