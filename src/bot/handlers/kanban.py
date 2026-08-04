@@ -806,11 +806,11 @@ async def cb_goto_main_confirm(callback: CallbackQuery) -> None:
     await callback.answer()
 
 @router.callback_query(F.data == "goto:main:yes")
-async def cb_goto_main_yes(callback: CallbackQuery, userbot_manager: UserbotManager) -> None:
+async def cb_goto_main_yes(callback: CallbackQuery, userbot_manager: UserbotManager, state: FSMContext) -> None:
     from src.bot.handlers.menu import cmd_menu
-    from aiogram.types import Message
+    await state.clear()
     await callback.answer()
-    await cmd_menu(callback.message, userbot_manager)
+    await cmd_menu(callback.message, userbot_manager, state)
 
 @router.callback_query(F.data == "goto:main:no")
 async def cb_goto_main_no(callback: CallbackQuery) -> None:
