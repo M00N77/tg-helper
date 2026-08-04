@@ -7,6 +7,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from src.bot.filters import OwnerOnly, get_team_for_event
 from src.bot.states import MenuStates
+from src.bot.fsm_utils import enter_state
 from src.core.news import build_news_digest
 from src.core.timeutil import fmt_local
 from src.db.repo import (
@@ -114,14 +115,16 @@ async def cb_menu_chats(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "menu:chats:find")
 async def cb_menu_chats_find(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(MenuStates.waiting_chat_name)
+    if not await enter_state(MenuStates.waiting_chat_name, state, callback):
+        return
     await callback.message.edit_text("Введи имя контакта:")
     await callback.answer()
 
 
 @router.callback_query(F.data == "menu:chats:send")
 async def cb_menu_chats_send(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(MenuStates.waiting_send_query)
+    if not await enter_state(MenuStates.waiting_send_query, state, callback):
+        return
     await callback.message.edit_text("Кому и что написать?")
     await callback.answer()
 
@@ -371,7 +374,8 @@ async def cb_menu_news_tog(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "menu:news:add")
 async def cb_menu_news_add(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(MenuStates.waiting_news_topic)
+    if not await enter_state(MenuStates.waiting_news_topic, state, callback):
+        return
     await callback.message.edit_text("Введи тему для мониторинга:")
     await callback.answer()
 

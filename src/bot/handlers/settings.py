@@ -10,6 +10,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from src.bot.filters import OwnerOnly
 from src.bot.states import SettingsStates
+from src.bot.fsm_utils import enter_state
 from src.config import LLMDefaults
 from src.core.timeutil import TZ_PRESETS, is_valid_tz, tz_short
 from src.db.repo import get_api_key, get_or_create_user, upsert_api_key
@@ -515,7 +516,8 @@ async def _render_section(telegram_id: int, section: str) -> tuple[str, InlineKe
 
 @router.callback_query(F.data == "set:input:openai_key")
 async def cb_input_openai(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(SettingsStates.waiting_openai_key)
+    if not await enter_state(SettingsStates.waiting_openai_key, state, callback):
+        return
     await callback.message.answer(
         "🔑 <b>OpenAI API key</b>\n\n"
         "Пришли ключ (начинается с <code>sk-</code>). Проверю и сохраню.\n\n"
@@ -527,7 +529,8 @@ async def cb_input_openai(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data == "set:input:gemini_key")
 async def cb_input_gemini(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(SettingsStates.waiting_gemini_key)
+    if not await enter_state(SettingsStates.waiting_gemini_key, state, callback):
+        return
     await callback.message.answer(
         "🔑 <b>Gemini API key</b>\n\n"
         "Пришли ключ с <code>aistudio.google.com</code>. Проверю и сохраню.\n\n"
@@ -539,7 +542,8 @@ async def cb_input_gemini(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data == "set:input:gigachat_key")
 async def cb_input_gigachat(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(SettingsStates.waiting_gigachat_key)
+    if not await enter_state(SettingsStates.waiting_gigachat_key, state, callback):
+        return
     await callback.message.answer(
         "🔑 <b>GigaChat credentials</b>\n\n"
         "Нужна base64-строка от <code>client_id:client_secret</code> из личного кабинета Sber.\n"
@@ -552,7 +556,8 @@ async def cb_input_gigachat(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data == "set:input:groq_key")
 async def cb_input_groq(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(SettingsStates.waiting_groq_key)
+    if not await enter_state(SettingsStates.waiting_groq_key, state, callback):
+        return
     await callback.message.answer(
         "🔑 <b>Groq API key</b>\n\n"
         "Пришли ключ (начинается с <code>gsk_</code>). Проверю и сохраню.\n\n"
@@ -565,14 +570,16 @@ async def cb_input_groq(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data == "set:input:digest_time")
 async def cb_input_digest(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(SettingsStates.waiting_digest_time)
+    if not await enter_state(SettingsStates.waiting_digest_time, state, callback):
+        return
     await callback.message.answer("Введи время в формате <code>HH:MM</code> (UTC). /cancel — отмена.")
     await callback.answer()
 
 
 @router.callback_query(F.data == "set:input:auto_reply_text")
 async def cb_input_auto_reply(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(SettingsStates.waiting_auto_reply_text)
+    if not await enter_state(SettingsStates.waiting_auto_reply_text, state, callback):
+        return
     await callback.message.answer(
         "Пришли новый текст автоответа. Будет отправляться, когда ты оффлайн "
         "(в режиме «заготовка»). /cancel — отмена."
@@ -582,7 +589,8 @@ async def cb_input_auto_reply(callback: CallbackQuery, state: FSMContext) -> Non
 
 @router.callback_query(F.data == "set:input:news_time")
 async def cb_input_news_time(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(SettingsStates.waiting_news_time)
+    if not await enter_state(SettingsStates.waiting_news_time, state, callback):
+        return
     await callback.message.answer(
         "Введи время утренних авто-новостей в <code>HH:MM</code> (UTC). /cancel — отмена."
     )
@@ -591,7 +599,8 @@ async def cb_input_news_time(callback: CallbackQuery, state: FSMContext) -> None
 
 @router.callback_query(F.data == "set:input:display_name")
 async def cb_input_display_name(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(SettingsStates.waiting_display_name)
+    if not await enter_state(SettingsStates.waiting_display_name, state, callback):
+        return
     await callback.message.answer(
         "✏ <b>Как к тебе обращаться?</b>\n\n"
         "Пришли новое имя (минимум 4 символа).\n"
@@ -621,7 +630,8 @@ async def cb_pick_tz(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "set:input:timezone")
 async def cb_input_tz(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(SettingsStates.waiting_timezone)
+    if not await enter_state(SettingsStates.waiting_timezone, state, callback):
+        return
     await callback.message.answer(
         "Введи название часового пояса в формате IANA, например <code>Europe/Moscow</code> или "
         "<code>Asia/Tashkent</code>. /cancel — отмена."
