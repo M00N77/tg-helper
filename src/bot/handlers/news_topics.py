@@ -7,6 +7,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from src.bot.filters import OwnerOnly
 from src.bot.states import NewsTopicStates
+from src.bot.fsm_utils import enter_state
 from src.core.timeutil import tz_short
 from src.db.repo import (
     add_news_topic,
@@ -78,7 +79,8 @@ async def _refresh(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "nt:add")
 async def cb_add(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(NewsTopicStates.waiting_topic)
+    if not await enter_state(NewsTopicStates.waiting_topic, state, callback):
+        return
     await callback.message.answer(
         "Введи тему одной фразой (можно с указанием окна — «AI и регулирование 48»).\n"
         "Если число в конце есть — это окно в часах (по умолчанию 24).\n"

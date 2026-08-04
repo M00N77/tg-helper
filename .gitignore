@@ -24,6 +24,10 @@ venv/
 .mypy_cache/
 .ruff_cache/
 
+logic_audit.md
+logic_audit2.md
+graphify-out/
+
 # OS
 .DS_Store
 Thumbs.db
