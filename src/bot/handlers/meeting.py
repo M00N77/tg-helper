@@ -49,6 +49,7 @@ from src.core.meeting_processor import (
     format_task_line,
 )
 from src.bot.states import MeetingStates
+from src.bot.fsm_utils import require_text
 from src.config import settings as app_settings
 from src.db.models import Team
 from src.userbot.manager import UserbotManager
@@ -511,12 +512,15 @@ async def _rerender_edit_menu(message: Message, state: FSMContext) -> None:
     )
 
 
-@router.message(MeetingStates.waiting_task_edit, F.text)
+@router.message(MeetingStates.waiting_task_edit)
 async def step_mtask_edit(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     action_id = data.get("action_id")
     task_idx = data.get("task_idx")
-    parsed = parse_task_input(message.text)
+    text = await require_text(message)
+    if text is None:
+        return
+    parsed = parse_task_input(text)
     if not parsed["title"]:
         await message.answer("⚠️ Название не может быть пустым. Попробуй ещё раз.")
         return
@@ -535,11 +539,14 @@ async def step_mtask_edit(message: Message, state: FSMContext) -> None:
     await _rerender_edit_menu(message, state)
 
 
-@router.message(MeetingStates.waiting_task_add, F.text)
+@router.message(MeetingStates.waiting_task_add)
 async def step_mtask_add(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     action_id = data.get("action_id")
-    parsed = parse_task_input(message.text)
+    text = await require_text(message)
+    if text is None:
+        return
+    parsed = parse_task_input(text)
     if not parsed["title"]:
         await message.answer("⚠️ Название не может быть пустым. Попробуй ещё раз.")
         return

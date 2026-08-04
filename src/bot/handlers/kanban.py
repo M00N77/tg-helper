@@ -21,6 +21,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from src.bot.filters import get_team_for_event
 from src.bot.states import KanbanAuthStates, KanbanCardStates
+from src.bot.fsm_utils import require_text
 
 from src.bot.handlers.yougile import YouGileClient, _parse_deadline, get_board_id
 from sqlalchemy import select
@@ -527,26 +528,32 @@ async def cmd_kanban_login(message: Message, state: FSMContext):
 
 @router.message(KanbanAuthStates.waiting_login)
 async def process_login(message: Message, state: FSMContext):
+    text = await require_text(message)
+    if text is None:
+        return
     if not await _can_manage_message(message, state):
         await state.clear()
         return
-    if message.text == "❌ Отмена":
+    if text == "❌ Отмена":
         await state.clear()
         await message.answer(
             "Отменено.", reply_markup=ReplyKeyboardRemove()
         )
         return
-    await state.update_data(login=message.text)
+    await state.update_data(login=text)
     await state.set_state(KanbanAuthStates.waiting_password)
     await message.answer("Введи пароль:")
 
 
 @router.message(KanbanAuthStates.waiting_password)
 async def process_password(message: Message, state: FSMContext):
+    text = await require_text(message)
+    if text is None:
+        return
     if not await _can_manage_message(message, state):
         await state.clear()
         return
-    if message.text == "❌ Отмена":
+    if text == "❌ Отмена":
         await state.clear()
         await message.answer(
             "Отменено.", reply_markup=ReplyKeyboardRemove()
@@ -556,7 +563,7 @@ async def process_password(message: Message, state: FSMContext):
         await message.delete()
     except Exception:
         pass
-    await state.update_data(password=message.text)
+    await state.update_data(password=text)
 
     data = await state.get_data()
     login = data["login"]
@@ -730,6 +737,9 @@ async def cb_set_board(callback: CallbackQuery, state: FSMContext):
 
 @router.message(KanbanAuthStates.waiting_for_board)
 async def process_board(message: Message, state: FSMContext):
+    text = await require_text(message)
+    if text is None:
+        return
     uid = message.from_user.id
     async with get_session() as session:
         team = await _resolve_dm_team(session, message)
@@ -741,7 +751,7 @@ async def process_board(message: Message, state: FSMContext):
     data = await state.get_data()
     boards = data.get("boards", [])
     try:
-        idx = int(message.text.strip()) - 1
+        idx = int(text.strip()) - 1
         board_id, board_name = boards[idx]
     except (ValueError, IndexError):
         await message.answer("❌ Введи номер из списка")
@@ -809,11 +819,14 @@ async def cb_goto_main_no(callback: CallbackQuery) -> None:
 
 @router.message(KanbanCardStates.waiting_title)
 async def process_card_title(message: Message, state: FSMContext):
-    if message.text == "❌ Отмена":
+    text = await require_text(message)
+    if text is None:
+        return
+    if text == "❌ Отмена":
         await state.clear()
         await message.answer("Отменено.", reply_markup=ReplyKeyboardRemove())
         return
-    await state.update_data(title=message.text.strip())
+    await state.update_data(title=text.strip())
     await state.set_state(KanbanCardStates.waiting_description)
     kb = ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text="⏭ Пропустить"), KeyboardButton(text="❌ Отмена")]],
@@ -824,11 +837,14 @@ async def process_card_title(message: Message, state: FSMContext):
 
 @router.message(KanbanCardStates.waiting_description)
 async def process_card_description(message: Message, state: FSMContext):
-    if message.text == "❌ Отмена":
+    text = await require_text(message)
+    if text is None:
+        return
+    if text == "❌ Отмена":
         await state.clear()
         await message.answer("Отменено.", reply_markup=ReplyKeyboardRemove())
         return
-    desc = "" if message.text == "⏭ Пропустить" else message.text.strip()
+    desc = "" if text == "⏭ Пропустить" else text.strip()
     await state.update_data(description=desc)
 
     data = await state.get_data()
@@ -1228,7 +1244,10 @@ async def cb_kanban_deadline(callback: CallbackQuery, state: FSMContext):
 
 @router.message(KanbanCardStates.setting_deadline)
 async def process_deadline(message: Message, state: FSMContext):
-    text = message.text.strip()
+    text = await require_text(message)
+    if text is None:
+        return
+    text = text.strip()
     try:
         await message.delete()
     except Exception:
