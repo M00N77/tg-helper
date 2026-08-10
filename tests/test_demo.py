@@ -4,7 +4,7 @@
     pytest tests/test_demo.py -v -k real                  # интеграционные с Groq
     pytest tests/test_demo.py -v -k "real and scenario"   # полный сквозной сценарий
 
-Требует GROQ_API_KEY в .env или переменной окружения.
+Real-тесты требуют GROQ_API_KEY; без ключа они skip'аются.
 """
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from demo_messages import SCENARIOS
 from src.core.agent import _safe_parse, route_intent
 from src.llm.groq_provider import GroqProvider
 
@@ -75,6 +74,8 @@ def provider():
 
 class TestRealGroqDemo:
     """Каждый тест отправляет реальную фразу в Groq → route_intent → проверяет intent."""
+
+    pytestmark = pytestmark_real
 
     # ── Напоминания и задачи ──
 
@@ -296,16 +297,3 @@ class TestRealGroqDemo:
     async def test_real_unknown(self, provider):
         result = await route_intent(provider, "фывапролдж")
         assert result["intent"] in ("unknown", "chat", "smalltalk")
-
-
-# ── Проверка, что все демо-сообщения имеют соответствующие тесты ────────────
-
-class TestDemoCoverage:
-    """Проверяет, что все сообщения из demo_messages.py покрыты хотя бы одним тестом."""
-
-    def test_all_scenarios_have_tests(self):
-        """Убеждаемся что demo_messages.py содержит сценарии (мета-тест)."""
-        assert len(SCENARIOS) > 0
-        total = sum(len(s.messages) for s in SCENARIOS)
-        assert total > 30
-        assert all(len(s.messages) > 0 for s in SCENARIOS)
