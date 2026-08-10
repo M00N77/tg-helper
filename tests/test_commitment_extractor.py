@@ -79,7 +79,7 @@ class TestExtractAndSaveCommitments:
         provider.chat = AsyncMock()
         contact = MagicMock()
         result = await extract_and_save_commitments(
-            provider, user_id=1, contact=contact, messages=[],
+            [provider], user_id=1, contact=contact, messages=[],
         )
         assert result == []
         provider.chat.assert_not_called()
@@ -107,7 +107,7 @@ class TestExtractAndSaveCommitments:
             patch("src.core.commitment_extractor.message_to_text", return_value="Артём: hello"),
         ):
             result = await extract_and_save_commitments(
-                provider, user_id=1, contact=contact, messages=messages,
+                [provider], user_id=1, contact=contact, messages=messages,
             )
 
         assert len(result) == 2
@@ -130,7 +130,7 @@ class TestExtractAndSaveCommitments:
             patch("src.core.commitment_extractor.message_to_text", return_value="user: test"),
         ):
             result = await extract_and_save_commitments(
-                provider, user_id=1,
+                [provider], user_id=1,
                 contact=MagicMock(display_name="Test"),
                 messages=[MagicMock()],
             )
@@ -155,7 +155,7 @@ class TestExtractAndSaveCommitments:
             patch("src.core.commitment_extractor.message_to_text", return_value="user: test"),
         ):
             result = await extract_and_save_commitments(
-                provider, user_id=1,
+                [provider], user_id=1,
                 contact=MagicMock(display_name="Test"),
                 messages=[MagicMock()],
             )
@@ -172,7 +172,7 @@ class TestExtractAndSaveCommitments:
             patch("src.core.commitment_extractor.message_to_text", return_value="user: test"),
         ):
             result = await extract_and_save_commitments(
-                provider, user_id=1,
+                [provider], user_id=1,
                 contact=MagicMock(display_name="Test"),
                 messages=[MagicMock()],
             )
@@ -196,7 +196,7 @@ class TestExtractAndSaveCommitments:
             patch("src.core.commitment_extractor.message_to_text", return_value="user: test"),
         ):
             await extract_and_save_commitments(
-                provider, user_id=1,
+                [provider], user_id=1,
                 contact=MagicMock(display_name="Test"),
                 messages=[MagicMock()],
             )
@@ -214,7 +214,7 @@ class TestExtractAndSaveCommitments:
             patch("src.core.commitment_extractor.message_to_text", return_value="user: test"),
         ):
             await extract_and_save_commitments(
-                provider, user_id=1,
+                [provider], user_id=1,
                 contact=MagicMock(display_name="Test"),
                 messages=[MagicMock()],
             )

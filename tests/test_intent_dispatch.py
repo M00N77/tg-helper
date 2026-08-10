@@ -150,7 +150,7 @@ class TestRouteIntentWithHistory:
         provider = MagicMock()
         provider.chat = AsyncMock(return_value='{"intent": "chat", "reply": "ok"}')
         await route_intent(
-            provider, "ему ответь",
+            [provider], "ему ответь",
             history_block="Последний контакт: Артём",
         )
         call_args = provider.chat.call_args[0][0]
@@ -160,7 +160,7 @@ class TestRouteIntentWithHistory:
         provider = MagicMock()
         provider.chat = AsyncMock(return_value='{"intent": "chat", "reply": "ok"}')
         await route_intent(
-            provider, "напомни завтра",
+            [provider], "напомни завтра",
             now_local="2026-06-07 18:00",
             tz_name="Europe/Moscow",
         )
@@ -170,7 +170,7 @@ class TestRouteIntentWithHistory:
     async def test_llm_returns_unknown_intent_not_in_spec(self):
         provider = MagicMock()
         provider.chat = AsyncMock(return_value='{"intent": "fly_to_moon"}')
-        result = await route_intent(provider, "test")
+        result = await route_intent([provider], "test")
         assert result["intent"] == "fly_to_moon"
 
 
