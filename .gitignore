@@ -28,6 +28,9 @@ logic_audit.md
 logic_audit2.md
 graphify-out/
 
+# AI-агентская конвенция (файл остаётся локально для opencode)
+AGENTS.md
+
 # OS
 .DS_Store
 Thumbs.db

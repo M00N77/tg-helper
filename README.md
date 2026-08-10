@@ -5,6 +5,8 @@
 - **Userbot** (Telethon) — подключается к вашему аккаунту через MTProto. Зеркалит сообщения, скачивает медиа, работает с группами.
 - **Control Bot** (aiogram) — Telegram-бот, через который вы и команда управляете ассистентом. Понимает команды, **свободный текст и голос** через LLM-агента.
 
+Один бот-токен (`BOT_TOKEN`) обслуживает и личку, и групповые чаты: режим определяется фильтрами (`OwnerOnly`, `OwnerOrTeamMember`, `GroupOnly`, `TeamAccessByChat`) и middleware `InviteCheckMiddleware`. Отдельного «группового бота» нет — это тот же `Dispatcher`, отфильтрованный по типу чата.
+
 Работает в **групповых и личных чатах** параллельно. В групповом чате — автоматическое создание команды, привязка YouGile, стендапы, пульс-опросы, аналитика рисков.
 
 ---
@@ -19,12 +21,12 @@
 - 📅 **Недельный отчёт** — что сделано, что горит, статистика по доске
 - 🌙 **Вечерний дайджест** — задачи на завтра из обязательств и YouGile
 - 📰 **Новости** — авто-дайджест по подписанным каналам и темам
-- ⏰ **Напоминания** — пинги о дедлайнах с настраиваемым lead-time
+- ⏰ **Напоминания** — пинги о дедлайнах с настраиваемым lead-time и рабочими часами
 
 ### Командные (групповые чаты)
 - 👥 **Управление командой** — создание, роли, приглашение через pending_invites
 - 📊 **Канбан-интеграция** (YouGile) — создание, просмотр, редактирование, закрытие, комментарии задач прямо из группового чата
-- 🎥 **Встречи** — создание комнат (Jitsi / МТС Линк), транскрипция → саммари → задачи с подтверждением
+- 🎥 **Встречи** — создание комнат (Jitsi / МТС Линк), транскрипция → саммари → задачи с подтверждением; для МТС Линк — вебхук `recordFile.ready` с автозагрузкой записи
 - 📋 **Стендапы** — ежедневный постинг шаблона, парсинг ответов (done/plan/blockers/mood)
 - 🚨 **Эскалация блокеров** — авто-уведомления при превышении порога severity (critical 1ч → low 72ч)
 - 📊 **Пульс-опросы** — анонимные ежедневные опросы настроения (1–5) с автозакрытием и сводкой
@@ -63,9 +65,9 @@
 ## Команды
 
 **Основные**
-- `/start` — приветствие, главное меню
+- `/start` — приветствие, главное меню (сбрасывает FSM)
 - `/help` — справка
-- `/menu` — главное меню навигации
+- `/menu` — главное меню навигации (сбрасывает FSM)
 - `/cancel` — отменить текущую операцию / FSM
 
 **Аккаунт**
@@ -85,8 +87,10 @@
 
 **Память**
 - `/todos` — открытые обещания (мои и мне), кнопки done/cancel
+- `/trash` — корзина обязательств (soft delete)
+- `/restore` — восстановить обязательство из корзины
 - `/style <имя>` — пересчитать профиль моего стиля общения с этим контактом
-- `/digest [now\|on\|off\|at HH:MM]` — утренний дайджест
+- `/digest [now|on|off|at HH:MM]` — утренний дайджест
 - `/test_evening_digest` — ручной запуск вечернего дайджеста
 
 **Команда**
@@ -95,13 +99,20 @@
 - `/team members` — список участников команды
 
 **Канбан (YouGile)**
-- `/kanban` — взаимодействие с доской: задачи, колонки
-- `/kanban_login` — авторизация в YouGile
-- `/kanban_board <id>` — выбрать активную доску
+- `/kanban` — взаимодействие с доской: задачи, колонки (личный чат)
+- `/kanban_login` — авторизация в YouGile (личный чат)
+- `/kanban_board <id>` — выбрать активную доску (личный чат)
 - `/kanban_analytics` — аналитика: среднее время задач, флаги риска, настроение команды
 - `/dashboard` — сводный отчёт: обязательства + канбан + риски
+- `/pm_dashboard` — алиас `/dashboard`
 - `/weekly` — недельный отчёт по задачам и встречам
 - `/burnout` — анализ эмоционального состояния по переписке
+
+**Команда и аналитика**
+- `/team_mood` — настроение команды
+- `/tasks_rating` — рейтинг задач участников
+- `/mysentiment` — моя статистика тональности
+- `/dict` — управление словарём команды (алиас `/dictionary`)
 
 **Новости**
 - `/news <тема> [--hours=24]` — разовый дайджест из подписанных каналов
@@ -112,9 +123,18 @@
 - `/meeting` — главное меню: отправить запись встречи для транскрипции и создания задач
 - `/meeting join` — создать комнату встречи (Jitsi / МТС Линк)
 
+**Стендапы и блокеры**
+- `/standup` — запустить стендап вручную
+- `/standup_status` — статус стендапа
+- `/standup_skip` — пропустить день
+- `/blockers` — показать последние блокеры
+
 **Групповой чат (командные)**
 - `/i_am_director` — создать команду, стать директором, привязать чат
 - `/setup_yougile` — настроить YouGile через deep-link в ЛС
+- `/setup_kanban` — пошаговая настройка доски в группе (email → пароль)
+- `/kanban_token <токен> <id_доски>` — прямой ввод токена в группе
+- `/kanban_status` — статус привязки доски в группе
 - `/link_yougile` — привязать Telegram ID к аккаунту YouGile
 - `/risks` — показать последние 10 рисков
 - `/activities_on` / `/activities_off` — вкл/выкл пульс-опросы
@@ -125,23 +145,27 @@
 - `/dictionary` — управление словарём команды + импорт XLSX
 - `/sentiment` — статистика тональности команды
 
+> Все FSM-вводы защищены от «застревания»: глобальная навигация (`/start`, `/menu`, back) сбрасывает состояние, нетекстовые сообщения в FSM-хендлерах отсекаются (`require_text`), старые inline-кнопки не перехватывают активный процесс (`enter_state`).
+
 ---
 
 ## Как это устроено
 
 ```
 ┌──────────────────────────────────────────────────┐
-│  Control Bot (aiogram)                           │
+│  Control Bot (aiogram, один BOT_TOKEN)           │
 │  команды, FSM, inline-меню,                      │
 │  free-text + голос → агент                       │
-│  фильтры: OwnerOnly / OwnerOrTeamMember          │
+│  фильтры: OwnerOnly / OwnerOrTeamMember /        │
+│          TeamAccessByChat (личка),               │
+│          GroupOnly (группы)                      │
 │  middleware: InviteCheckMiddleware               │
 └────────────┬─────────────────────────────────────┘
              │
 ┌────────────▼─────────────────────────────────────┐
 │  Core                                            │
 │  • Agent (LLM intent router)                     │
-│  • LLM router (OpenAI ↔ Gemini ↔ Groq ↔ GigaChat)│
+│  • LLM router (тиры + фолбэк-цепочка провайдеров)│
 │  • ChatService, Summarizer, Style profile        │
 │  • Commitments, Reminders, Digest, News          │
 │  • Evening digest                                │
@@ -149,19 +173,26 @@
 │  • Sentiment analysis + risk detection           │
 │  • Dictionary cache (сленг → интенты)            │
 │  • Auth service (RBAC, RolePermission)           │
-└────────────┬───────────────────────┬─────────────┘
-             │ MTProto                │ embeddings/LLM
-┌────────────▼─────────┐     ┌────────▼──────────┐
-│ Userbot (Telethon)   │     │ Storage           │
-│ • Auth с 2FA         │     │ • PostgreSQL (asyncpg) │
-│ • NewMessage mirror  │     │ • Qdrant embedded │
-│ • UpdateFolderPeers  │     │ • Fernet secrets  │
-│ • Auto-reply offline │     │ • Alembic         │
-│ • Invite-check       │     │ • EncryptedString │
-└──────────────────────┘     └───────────────────┘
+│  • Lifecycle: супервизия задач, shutdown         │
+└──────┬───────────────────────────┬───────────────┘
+       │ MTProto                   │ HTTP (aiohttp)
+┌──────▼─────────┐      ┌──────────▼──────────┐    ┌─────────────────────┐
+│ Userbot (Telethon)│   │ Webhook server :PORT │    │ Storage             │
+│ • Auth с 2FA      │   │ • GET /health        │    │ • PostgreSQL (asyncpg) │
+│ • NewMessage mirror│  │ • POST /webhooks/mtslink│  │ • Qdrant embedded   │
+│ • UpdateFolderPeers│  │   (recordFile.ready) │    │ • Fernet secrets    │
+│ • Auto-reply offline│ │ → download → ffmpeg  │    │ • Alembic           │
+│ • Invite-check     │  │ → транскрипция → задачи│  │ • EncryptedString   │
+└───────────────────┘  └──────────────────────┘    └─────────────────────┘
 ```
 
-**Фоновые задачи** (9 в одном event loop):
+**Жизненный цикл** (`src/main.py` + `src/core/lifecycle.py`):
+- Все фоновые задачи — **именованные supervised-таски** в одном event loop: при падении любой из них процесс выходит с кодом 1 — на Railway контейнер перезапускается автоматически.
+- Таймауты: `init_db()` 60с, `restore_all()` 120с, shutdown-ожидание 30с.
+- SIGINT/SIGTERM → ордерный останов: cancel задач → `stop_webhook_server()` → закрытие userbot-сессий → `vector_store.close()` → `close_db()`.
+
+**Фоновые задачи** (supervised, 9 циклов + webhook-сервер):
+- `webhook-server` — aiohttp: `/health` + `/webhooks/mtslink` (0.0.0.0:$PORT)
 - `digest-scheduler` — утренний дайджест по TZ
 - `evening-digest` — вечерний дайджест (задачи на завтра) в 20:00
 - `news-scheduler` — авто-дайджест по темам-фаворитам
@@ -182,28 +213,56 @@
 
 **Пульс-опросы.** Plugin-архитектура (`activities/registry.py`): новая активность = новый класс без правки scheduler/handler. Ответы псевдонимны (HMAC).
 
+**LLM-роутер** (`src/llm/router.py`):
+- Запрос классифицируется на **тир** (`src/llm/complexity.py`): эвристика (код/анализ/длинный промпт → `heavy`; короткий разговор → `light`; неуверенность → `heavy` как безопасный default). LLM-классификация на каждый запрос не выполняется.
+- Цепочки фолбэка: **light** = groq → gemini → openai → gigachat; **heavy** = openai → gemini → gigachat → groq.
+- Ретраи (2 попытки, экспоненциальная задержка 1–30с) только для 429/5xx/timeout; auth/400 не ретраятся.
+- При переключении провайдера бот уведомляет пользователя («Переключаюсь на …»), детали ретраев — в серверных логах.
+
+**Вебхуки МТС Линк** (`src/services/webhook_server.py` + `mtslink_api.py`):
+- При создании комнаты регистрируется webhook `recordFile.ready` на `{WEBHOOK_BASE_URL}/webhooks/mtslink`.
+- Хендлер отвечает 200 немедленно, тяжёлую работу (скачивание mp4 → ffmpeg → транскрипция → задачи в YouGile) делает в `asyncio.create_task`; статусы встречи: `recording → downloading → processing → done/failed`.
+- Проверка подписи: заголовок `X-Webhook-Secret` сверяется через `hmac.compare_digest` с `WEBHOOK_SECRET`.
+- `/health` — liveness-эндпоинт, не зависящий от LLM/MTS Link.
+
 ---
 
 ## Стек
 
 - Python 3.12
 - **aiogram 3.x** — control bot
-- **Telethon 1.36+** — userbot (MTProto)
+- **Telethon 1.44+** — userbot (MTProto)
 - **SQLAlchemy 2** + **asyncpg** — PostgreSQL, асинхронный доступ
-- **Alembic** — миграции схемы БД
+- **Alembic** — миграции схемы БД (31 таблица)
 - **Qdrant** (embedded) — локальный векторный поиск
 - **OpenAI SDK** + **google-genai** — LLM-агент (gpt-5-mini / gpt-5.5, gemini-2.5-flash / gemini-3-flash-preview)
-- **Groq SDK** — LLM-провайдер с поддержкой сверхбыстрых Llama моделей (Llama 3.3 70B Versatile)
+- **Groq SDK** — LLM-провайдер со сверхбыстрыми Llama моделями (Llama 3.3 70B Versatile)
 - **GigaChat SDK** — дополнительный LLM-провайдер от Сбера
 - **faster-whisper** + OpenAI Whisper API — транскрипция голоса (local / api / hybrid)
 - **pypdf**, **python-docx** — документы
 - **Транскрипция встреч** — upload-based, через transcription_service
-- **Создание комнат** — Jitsi (бесплатно) / МТС Линк (по API-токену)
+- **Создание комнат** — Jitsi (бесплатно) / МТС Линк (по API-токену, вебхуки записей)
+- **aiohttp** — webhook-сервер (порт `PORT`)
 - **rapidfuzz** — fuzzy-резолвер контактов
 - **cryptography (Fernet)** — шифрование секретов (AES-128-CBC + HMAC-SHA256)
 - **openpyxl** — импорт словаря команды из XLSX
 
 Имена моделей вынесены в `src/config.py:LLMDefaults` — заменить при выходе новых.
+
+---
+
+## База данных (основные таблицы)
+
+| Группа | Таблицы |
+|---|---|
+| Ядро | `users`, `user_settings`, `telegram_sessions`, `api_keys`, `contacts`, `messages`, `commitments`, `auto_reply_logs`, `index_jobs`, `transcription_cache`, `pending_actions`, `news_topics` |
+| Команда / RBAC | `teams`, `team_members`, `pending_invites`, `role_permissions`, `team_dictionaries`, `yougile_user_aliases`, `pending_team_tasks`, `pending_tasks` |
+| Канбан (YouGile) | `teams.active_board_id`, `pending_team_tasks` (синк задач) |
+| Встречи | `meetings`, `meeting_tasks` |
+| PM-функции | `standups`, `blockers`, `time_logs`, `sociometry_cache` |
+| Activities / Sentiment | `activity_sessions`, `activity_responses`, `message_sentiments`, `message_risks`, `email_messages` |
+
+Полная схема — в `src/db/models.py` + миграции `alembic/versions/`.
 
 ---
 
@@ -230,8 +289,18 @@ python -c "import secrets, base64; print(base64.urlsafe_b64encode(secrets.token_
 ```env
 BOT_TOKEN=123456:AA...
 OWNER_TELEGRAM_ID=987654321
+# Опционально: дополнительные Telegram user_id через запятую
+ALLOWED_TELEGRAM_IDS=
 ENCRYPTION_KEY=<base64-fernet-key>
 DATABASE_URL=postgresql+asyncpg://user:password@host:5432/dbname
+
+# Webhook МТС Линк (необязателен: без него записи встреч не скачиваются автоматически)
+# Local:   WEBHOOK_BASE_URL=http://localhost:8080
+# Railway: WEBHOOK_BASE_URL=https://<railway-domain>
+WEBHOOK_BASE_URL=
+WEBHOOK_SECRET=<секрет для X-Webhook-Secret>
+# Порт HTTP-сервера (Railway задаёт сам; локально по умолчанию 8080)
+PORT=8080
 ```
 
 ### 3. Подними
@@ -243,9 +312,11 @@ docker compose logs -f assistant
 
 Первая сборка занимает 3–5 минут (Python + ffmpeg + зависимости). Образ кэшируется.
 
+Entrypoint контейнера: `alembic upgrade head && python -m src.main` — миграции применяются автоматически при каждом старте.
+
 `./data/` смонтирован как volume — там лежат:
 - `qdrant/` — векторное хранилище
-- `media/` — скачанные voice/audio/документы
+- `media/` — скачанные voice/audio/документы (записи встреч — временные файлы, удаляются после обработки)
 - `cache/` — кэш моделей `faster-whisper` (~500 MB после первой транскрипции)
 
 База данных PostgreSQL подключается внешне через переменную `DATABASE_URL`.
@@ -276,7 +347,7 @@ docker compose logs -f assistant
 - **🌍 Часовой пояс** — от него отталкиваются шедулеры и отображения времён.
 - **🔄 Авто-ответ** — режимы `static` / `smart` (LLM). Кулдаун 5/15/30/60 мин.
 - **☀ Дайджест** — утренняя сводка: ждут ответа, горящие обещания, авто-ответы.
-- **⏰ Напоминания** — пинги о дедлайнах. Lead 1/2/4/12/24 ч; алерт при просрочке.
+- **⏰ Напоминания** — пинги о дедлайнах. Lead 1/2/4/12/24 ч; алерт при просрочке; рабочие часы/дни.
 - **📰 Новости** — авто-дайджест по темам из `/news_topics`.
 - **🛡 Приватность** — игнорировать архив (по умолчанию ВКЛ).
 - **🤖 LLM** — переключение OpenAI ↔ Gemini ↔ Groq ↔ GigaChat, лёгкая ↔ тяжёлая модель.
@@ -289,18 +360,27 @@ docker compose logs -f assistant
 
 ## Безопасность и приватность
 
-- Фильтры `OwnerOnly` / `OwnerOrTeamMember` + **RBAC** (роли: директор, участник; права на создание задач на других, подтверждение заявок).
-- **Шифрование Fernet** (AES-128-CBC + HMAC-SHA256) для:
-  - session-string и api_hash Telegram (`telegram_sessions`)
-  - всех LLM-ключей (`api_keys`)
-  - токенов YouGile и МТС Линк (`teams`, через `EncryptedString` ORM — прозрачно для кода)
-- **Псевдонимизация**: голоса в пульс-опросах хешируются через HMAC (без прямого user_id).
+**Доступ.** Фильтры `OwnerOnly` / `OwnerOrTeamMember` / `GroupOnly` + **RBAC** (роли: директор, участник; права на создание задач на других, подтверждение заявок). Дополнительные доверенные user_id — через `ALLOWED_TELEGRAM_IDS`.
+
+**Шифрование** (Fernet: AES-128-CBC + HMAC-SHA256, ключ — `ENCRYPTION_KEY` из `.env`). Слои в `src/crypto.py`:
+
+| Слой | Где | Что |
+|---|---|---|
+| `encrypt()` / `decrypt()` | `src/crypto.py` | Прямые вызовы для ручного шифрования |
+| `try_decrypt()` | `src/crypto.py` | Расшифровка с fallback на легаси-plaintext |
+| `EncryptedString` | `src/db/models.py` | SQLAlchemy `TypeDecorator` — прозрачное шифрование на уровне ORM |
+| `respondent_hash()` | `src/crypto.py` | HMAC-SHA256 односторонний хеш (псевдонимизация, не шифрование) |
+
+Зашифровано: `api_hash_enc`/`session_string_enc` (`telegram_sessions`), `key_enc` LLM-ключей (`api_keys`), `kanban_token` и `mtslink_token` (`teams`, через `EncryptedString`). **Не шифруется**: тексты сообщений/транскрипты, медиафайлы, метаданные (даты, peer_id, sender_id), настройки, контакты, commitments.
+
+**Прочее:**
+- Псевдонимизация: голоса в пульс-опросах хешируются через HMAC (без прямого user_id).
 - Сообщения с 2FA-паролем и API-ключами удаляются из чата сразу после успеха.
 - `.env` и `data/` исключены из git.
 - Mirror пишет сообщения в локальную БД на вашей машине.
 - Все отправляемые сообщения — через двухшаговое подтверждение (`PendingAction`).
 - Действия, затрагивающие других (создание задач на другого участника), проходят approval-механизм.
-- Подробнее: `ENCRYPTION.md`.
+- Вебхук-эндпоинт проверяет `X-Webhook-Secret` через `hmac.compare_digest`.
 
 ---
 
@@ -309,6 +389,8 @@ docker compose logs -f assistant
 - **Telegram ToS**: userbot с авто-ответом — серая зона. По умолчанию авто-ответ выключен.
 - **Один инстанс**: Qdrant embedded держит lock на `data/qdrant/`.
 - **Однопользовательский по умолчанию**: командный режим включается через `/i_am_director` в групповом чате.
+- **Вебхуки МТС Линк**: работают только при заданном `WEBHOOK_BASE_URL` (Railway-домен или localhost). Без него встречи создаются, но записи не скачиваются автоматически.
+- **Локальный запуск**: ffmpeg должен быть установлен в системе (Docker-образ включает его; на Windows — через `winget install ffmpeg` или вручную).
 
 ---
 
