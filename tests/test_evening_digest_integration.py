@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.evening_digest import send_evening_digest
 from src.db.models import Commitment, Team
@@ -66,11 +67,20 @@ async def test_integration_evening_digest(session):
         ]
     )
 
+    # send_evening_digest открывает сессии через src.db.session.get_session(),
+    # которая использует глобальный engine. В полном suite глобальный engine
+    # переживает несколько event loop'ов → «Future attached to a different loop».
+    # Привязываем сессии дайджеста к engine фикстуры (один loop на тест).
+    local_maker = async_sessionmaker(
+        session.bind, expire_on_commit=False, class_=AsyncSession
+    )
+
     with (
         patch(
             "src.bot.handlers.yougile.YouGileClient", return_value=mock_client,
         ),
         patch("src.core.evening_digest.notifier.notify", new_callable=AsyncMock) as mock_notify,
+        patch("src.db.session.SessionLocal", local_maker),
     ):
         await send_evening_digest(999001)
 
