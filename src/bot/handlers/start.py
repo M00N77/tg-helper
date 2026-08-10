@@ -7,6 +7,7 @@ from src.config import settings
 from src.bot.handlers.menu import cmd_menu
 from src.bot.lexicon import L
 from src.bot.states import OnboardingStates
+from src.bot.fsm_utils import require_text
 from src.db.models import User, PendingInvite, TeamMember, Team
 from src.db.repo import (
     get_or_create_user,
@@ -20,6 +21,7 @@ router = Router(name="start")
 
 @router.message(Command("start", "help"))
 async def cmd_start(message: Message, userbot_manager: UserbotManager, state: FSMContext, command: CommandObject | None = None) -> None:
+    await state.clear()
     uid = message.from_user.id
     username = (message.from_user.username or "").lower()
     is_owner = uid == settings.owner_telegram_id
@@ -93,14 +95,17 @@ async def cmd_start(message: Message, userbot_manager: UserbotManager, state: FS
                 return
 
     if is_owner:
-        await cmd_menu(message, userbot_manager)
+        await cmd_menu(message, userbot_manager, state)
     else:
         await message.answer(L.ONBOARDING_DONE.format(name=user.display_name))
 
 
 @router.message(OnboardingStates.waiting_display_name)
 async def process_display_name(message: Message, state: FSMContext) -> None:
-    name = message.text.strip()
+    name = await require_text(message)
+    if name is None:
+        return
+    name = name.strip()
     if len(name) < 2:
         await message.answer("❌ Слишком коротко. Напиши имя (минимум 2 символа).")
         return

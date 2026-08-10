@@ -3,6 +3,7 @@ import logging
 from datetime import datetime
 from aiogram import Router, F
 from aiogram.exceptions import TelegramBadRequest
+from aiogram.filters.callback_data import CallbackData
 
 logger = logging.getLogger(__name__)
 from aiogram.filters import Command
@@ -11,14 +12,16 @@ from aiogram.types import (
     Message,
     CallbackQuery,
     InlineKeyboardButton,
+    InlineKeyboardMarkup,
     KeyboardButton,
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from src.bot.filters import is_team_owner, get_team_for_event
+from src.bot.filters import get_team_for_event
 from src.bot.states import KanbanAuthStates, KanbanCardStates
+from src.bot.fsm_utils import require_text, enter_state
 
 from src.bot.handlers.yougile import YouGileClient, _parse_deadline, get_board_id
 from sqlalchemy import select
@@ -26,14 +29,22 @@ from src.db.session import get_session
 from src.db.repo import (
     set_active_board, update_team_kanban,
     get_team_members, get_or_create_user, set_team_member_yougile_id,
-    get_team_by_chat, get_team_by_owner,
+    get_team_by_chat,
+    get_user_teams, get_team_member,
 )
-from src.db.models import TeamMember
+from src.db.models import Team, TeamMember
+from src.group_bot.permissions import can_manage_kanban
 from src.services.crypto_service import crypto_service
 from src.userbot.manager import UserbotManager
 
 
 router = Router(name="kanban")
+
+
+class KanbanTeamCB(CallbackData, prefix="kb_team"):
+    """Callback для работы с канбан-досками команд в ЛС (строгий стейт-менеджмент)."""
+    team_id: int
+    action: str
 
 
 async def _decrypt_kanban_token(team) -> str | None:
@@ -95,40 +106,274 @@ def format_card_preview(task: dict, column_title: str, users_dict: dict[str, str
     return "\n".join(lines)
 
 
-@router.message(Command("kanban"))
-async def cmd_kanban(message: Message):
-    """Управление канбан-доской"""
-    async with get_session() as session:
-        team = await get_team_for_event(session, message)
-    
-    is_owner = await is_team_owner(message)
-    
+def _board_menu_markup(team_id: int, is_admin: bool) -> InlineKeyboardMarkup:
+    """Клавиатура меню доски: у member — только «Мои задачи», у admin/owner — ещё настройки."""
     kb = InlineKeyboardBuilder()
-    if not team or not team.kanban_token:
-        if is_owner:
-            kb.row(InlineKeyboardButton(text="🔑 Войти по логину и паролю YouGile", callback_data="menu:kanban:login"))
-    else:
-        kb.row(
-            InlineKeyboardButton(text="📊 Показать доску", callback_data="kanban:board"),
-            InlineKeyboardButton(text="➕ Создать задачу", callback_data="kanban:add"),
+    kb.row(InlineKeyboardButton(
+        text="📋 Мои задачи",
+        callback_data=KanbanTeamCB(team_id=team_id, action="my_tasks").pack(),
+    ))
+    if is_admin:
+        kb.row(InlineKeyboardButton(
+            text="⚙️ Настройки",
+            callback_data=KanbanTeamCB(team_id=team_id, action="settings").pack(),
+        ))
+    return kb.as_markup()
+
+
+def _is_team_admin(team: Team, member: TeamMember | None, telegram_id: int) -> bool:
+    """admin/owner может настраивать доску: роль в TeamMember или владелец команды."""
+    return can_manage_kanban(team, member, telegram_id)
+
+
+async def _resolve_dm_team(session, event: Message | CallbackQuery) -> Team | None:
+    """Команда для события из ЛС: по чату → по владению → первая команда участника."""
+    team = await get_team_for_event(session, event)
+    if team is None and event.from_user:
+        teams = await get_user_teams(session, event.from_user.id)
+        if teams:
+            team = teams[0]
+    return team
+
+
+async def _can_manage_message(message: Message, state: FSMContext | None = None) -> bool:
+    """RBAC-проверка для message-хендлеров настройки доски. При отказе отвечает."""
+    uid = message.from_user.id
+    async with get_session() as session:
+        data = await state.get_data() if state is not None else {}
+        chat_id = data.get("setup_chat_id")
+        team = await get_team_by_chat(session, chat_id) if chat_id else None
+        if team is None:
+            team = await _resolve_dm_team(session, message)
+        member = await get_team_member(session, team.id, uid) if team else None
+        allowed = can_manage_kanban(team, member, uid)
+    if not allowed:
+        await message.answer("⛔ Доступно только администраторам")
+    return allowed
+
+
+async def _render_board_menu(message: Message, team: Team, member: TeamMember | None) -> None:
+    """Отправляет меню канбан-доски одной команды (если доска настроена)."""
+    if not team.kanban_token:
+        await message.answer(
+            f"❌ Канбан-доска команды «{team.name or '?'}» не настроена.\n"
+            "Попроси администратора выполнить /setup_yougile в групповом чате команды."
         )
-        kb.row(
-            InlineKeyboardButton(text="🔄 Синхронизировать", callback_data="kanban:sync"),
-            InlineKeyboardButton(text="📈 Статистика", callback_data="kanban:stats"),
-        )
-        if is_owner:
-            kb.row(InlineKeyboardButton(text="⚙ Настройки", callback_data="kanban:settings"))
-    
+        return
+    is_admin = _is_team_admin(team, member, message.from_user.id)
     await message.answer(
-        "📊 <b>Канбан-доска</b>\n\n"
-        "Бот автоматически:\n"
-        "✅ Создаёт карточки из задач в чате\n"
-        "✅ Назначает ответственных\n"
-        "✅ Отслеживает дедлайны\n"
-        "✅ Перемещает задачи по статусам\n\n"
-        "Поддерживается: YouGile",
-        reply_markup=kb.as_markup()
+        f"📊 <b>{team.name or 'Канбан-доска'}</b>\n\nВыбери действие:",
+        reply_markup=_board_menu_markup(team.id, is_admin),
     )
+
+
+@router.message(Command("kanban"), F.chat.type == "private")
+async def cmd_kanban(message: Message):
+    """Управление канбан-доской (ЛС): одна команда — сразу меню, несколько — выбор."""
+    uid = message.from_user.id
+    async with get_session() as session:
+        teams = await get_user_teams(session, uid)
+        if not teams:
+            await message.answer("❌ У тебя нет команд. Создай или присоединись в группе")
+            return
+        if len(teams) == 1:
+            member = await get_team_member(session, teams[0].id, uid)
+            await _render_board_menu(message, teams[0], member)
+            return
+        kb = InlineKeyboardBuilder()
+        for team in teams:
+            kb.row(InlineKeyboardButton(
+                text=team.name or f"Команда #{team.id}",
+                callback_data=KanbanTeamCB(team_id=team.id, action="select").pack(),
+            ))
+        await message.answer("Выбери команду:", reply_markup=kb.as_markup())
+
+
+@router.callback_query(KanbanTeamCB.filter(F.action == "select"))
+async def cb_kanban_team_select(callback: CallbackQuery, callback_data: KanbanTeamCB):
+    """Меню доски выбранной команды. Guard Clause защищает от IDOR."""
+    uid = callback.from_user.id
+    async with get_session() as session:
+        member = await get_team_member(session, callback_data.team_id, uid)
+        if member is None:
+            await callback.answer("Доступ запрещен", show_alert=True)
+            return
+        team = await session.get(Team, callback_data.team_id)
+        if team is None:
+            await callback.answer("Команда не найдена", show_alert=True)
+            return
+        if not team.kanban_token:
+            await callback.message.edit_text(
+                f"❌ Канбан-доска команды «{team.name or '?'}» не настроена.\n"
+                "Попроси администратора выполнить /setup_yougile в групповом чате команды."
+            )
+            await callback.answer()
+            return
+        is_admin = _is_team_admin(team, member, uid)
+
+    await callback.message.edit_text(
+        f"📊 <b>{team.name or 'Канбан-доска'}</b>\n\nВыбери действие:",
+        reply_markup=_board_menu_markup(callback_data.team_id, is_admin),
+    )
+    await callback.answer()
+
+
+@router.callback_query(KanbanTeamCB.filter(F.action == "settings"))
+async def cb_kanban_team_settings(callback: CallbackQuery, callback_data: KanbanTeamCB):
+    """Настройки доски. Настройка выполняется админом в групповом чате команды."""
+    uid = callback.from_user.id
+    async with get_session() as session:
+        member = await get_team_member(session, callback_data.team_id, uid)
+        if member is None:
+            await callback.answer("Доступ запрещен", show_alert=True)
+            return
+        team = await session.get(Team, callback_data.team_id)
+        if team is None:
+            await callback.answer("Команда не найдена", show_alert=True)
+            return
+    if not _is_team_admin(team, member, uid):
+        await callback.answer("Доступ запрещен", show_alert=True)
+        return
+
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(
+        text="🔄 Синхронизировать пользователей",
+        callback_data=KanbanTeamCB(team_id=team.id, action="sync_users").pack(),
+    ))
+    kb.row(InlineKeyboardButton(
+        text="◀ К доске",
+        callback_data=KanbanTeamCB(team_id=team.id, action="select").pack(),
+    ))
+    await callback.message.edit_text(
+        "⚙️ <b>Настройки канбан</b>\n\n"
+        "Привязка и смена доски YouGile выполняются администратором "
+        "в групповом чате команды командой /setup_yougile.\n\n"
+        "Синхронизация сопоставляет участников команды с пользователями "
+        "YouGile по именам (без учёта регистра).",
+        reply_markup=kb.as_markup(),
+    )
+    await callback.answer()
+
+
+def _normalize_name(name: str | None) -> str:
+    return " ".join((name or "").lower().split())
+
+
+def find_yougile_match(yg_users: list[dict], display_name: str | None) -> str | None:
+    """Ищет пользователя YouGile по имени участника (без учёта регистра).
+    Сначала точное совпадение, затем по вхождению. Возвращает yougile_user_id или None."""
+    target = _normalize_name(display_name)
+    if not target:
+        return None
+    for u in yg_users:
+        if _normalize_name(u.get("name")) == target:
+            return u["id"]
+    for u in yg_users:
+        u_name = _normalize_name(u.get("name"))
+        if u_name and (u_name in target or target in u_name):
+            return u["id"]
+    return None
+
+
+@router.callback_query(KanbanTeamCB.filter(F.action == "sync_users"))
+async def cb_kanban_sync_users(callback: CallbackQuery, callback_data: KanbanTeamCB):
+    """Синхронизация участников команды с пользователями YouGile по именам."""
+    uid = callback.from_user.id
+    async with get_session() as session:
+        team = await session.get(Team, callback_data.team_id)
+        if team is None:
+            await callback.answer("Команда не найдена", show_alert=True)
+            return
+        member = await get_team_member(session, team.id, uid)
+        if not can_manage_kanban(team, member, uid):
+            await callback.answer("⛔ Доступно только администраторам", show_alert=True)
+            return
+        token = await _decrypt_kanban_token(team)
+        members = await get_team_members(session, team.id)
+
+    if not token:
+        await callback.answer("Сначала настройте канбан-доску", show_alert=True)
+        return
+
+    try:
+        client = YouGileClient(token)
+        yg_users = await client.get_users()
+    except Exception as e:
+        await callback.answer(f"❌ Ошибка при получении списка YouGile: {e}", show_alert=True)
+        return
+
+    linked = 0
+    async with get_session() as session:
+        for m in members:
+            yg_id = find_yougile_match(yg_users, m.display_name)
+            if yg_id and m.yougile_user_id != yg_id:
+                await set_team_member_yougile_id(session, team.id, m.telegram_id, yg_id)
+                linked += 1
+
+    await callback.answer(
+        f"Синхронизация завершена. Привязано {linked} пользователей.",
+        show_alert=True,
+    )
+
+
+def _format_my_tasks(tasks: list[dict]) -> str:
+    """Компактный текстовый список задач пользователя из YouGile."""
+    if not tasks:
+        return "📭 У тебя нет задач на доске"
+    lines = ["📋 <b>Мои задачи</b>\n"]
+    for task in tasks[:50]:
+        title = (task.get("title") or "").strip() or "(без названия)"
+        line = f"• {title}"
+        deadline_raw = task.get("deadline")
+        if isinstance(deadline_raw, dict) and deadline_raw.get("deadline"):
+            dt = datetime.fromtimestamp(deadline_raw["deadline"] / 1000)
+            line += f" — до {dt.strftime('%d.%m.%Y')}"
+        lines.append(line)
+    if len(tasks) > 50:
+        lines.append(f"\n… и ещё {len(tasks) - 50}")
+    return "\n".join(lines)
+
+
+@router.callback_query(KanbanTeamCB.filter(F.action == "my_tasks"))
+async def cb_kanban_my_tasks(callback: CallbackQuery, callback_data: KanbanTeamCB):
+    """Список задач YouGile, назначенных на пользователя. Guard Clause от IDOR."""
+    uid = callback.from_user.id
+    async with get_session() as session:
+        member = await get_team_member(session, callback_data.team_id, uid)
+        if member is None:
+            await callback.answer("Доступ запрещен", show_alert=True)
+            return
+        if not member.yougile_user_id:
+            await callback.answer(
+                "Твой Telegram не привязан к YouGile. Обратись к администратору",
+                show_alert=True,
+            )
+            return
+        team = await session.get(Team, callback_data.team_id)
+        token = await _decrypt_kanban_token(team) if team else None
+
+    if not token:
+        await callback.answer("Сначала настройте канбан-доску", show_alert=True)
+        return
+
+    try:
+        client = YouGileClient(token)
+        tasks = await client.get_tasks_by_assignee(member.yougile_user_id)
+    except Exception as e:
+        await callback.answer(f"❌ Ошибка при получении задач: {e}", show_alert=True)
+        return
+
+    text = _format_my_tasks(tasks)
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(
+        text="◀ К доске",
+        callback_data=KanbanTeamCB(team_id=callback_data.team_id, action="select").pack(),
+    ))
+    try:
+        await callback.message.edit_text(text, reply_markup=kb.as_markup())
+    except TelegramBadRequest:
+        pass
+    await callback.answer()
 
 
 @router.callback_query(F.data == "kanban:board")
@@ -254,11 +499,11 @@ async def cb_kanban_tasks(callback: CallbackQuery):
 @router.message(Command("kanban_login"), F.chat.type == "private")
 async def cmd_kanban_login(message: Message, state: FSMContext):
     from src.group_bot.permissions import get_role
-    from src.bot.filters import _get_chat_id  # noqa: F401
 
     uid = message.from_user.id
     async with get_session() as session:
-        team = await get_team_by_owner(session, uid)
+        teams = await get_user_teams(session, uid)
+    team = teams[0] if teams else None
     if team is None:
         await message.answer(
             "❌ У тебя нет команды, которой ты владеешь или в которой ты админ.\n"
@@ -267,8 +512,8 @@ async def cmd_kanban_login(message: Message, state: FSMContext):
         )
         return
     role = await get_role(team.chat_id, uid)
-    if role not in ("owner", "admin"):
-        await message.answer("⛔ Только владелец или админ команды может настраивать доску.")
+    if role != "admin":
+        await message.answer("⛔ Доступно только администраторам")
         return
     await state.set_state(KanbanAuthStates.waiting_login)
     await state.update_data(setup_chat_id=team.chat_id)
@@ -283,28 +528,32 @@ async def cmd_kanban_login(message: Message, state: FSMContext):
 
 @router.message(KanbanAuthStates.waiting_login)
 async def process_login(message: Message, state: FSMContext):
-    if not await is_team_owner(message):
-        await message.answer("⛔ Только владелец команды может менять настройки доски")
+    text = await require_text(message)
+    if text is None:
+        return
+    if not await _can_manage_message(message, state):
         await state.clear()
         return
-    if message.text == "❌ Отмена":
+    if text == "❌ Отмена":
         await state.clear()
         await message.answer(
             "Отменено.", reply_markup=ReplyKeyboardRemove()
         )
         return
-    await state.update_data(login=message.text)
+    await state.update_data(login=text)
     await state.set_state(KanbanAuthStates.waiting_password)
     await message.answer("Введи пароль:")
 
 
 @router.message(KanbanAuthStates.waiting_password)
 async def process_password(message: Message, state: FSMContext):
-    if not await is_team_owner(message):
-        await message.answer("⛔ Только владелец команды может менять настройки доски")
+    text = await require_text(message)
+    if text is None:
+        return
+    if not await _can_manage_message(message, state):
         await state.clear()
         return
-    if message.text == "❌ Отмена":
+    if text == "❌ Отмена":
         await state.clear()
         await message.answer(
             "Отменено.", reply_markup=ReplyKeyboardRemove()
@@ -314,7 +563,7 @@ async def process_password(message: Message, state: FSMContext):
         await message.delete()
     except Exception:
         pass
-    await state.update_data(password=message.text)
+    await state.update_data(password=text)
 
     data = await state.get_data()
     login = data["login"]
@@ -352,14 +601,15 @@ async def process_password(message: Message, state: FSMContext):
 
 @router.message(Command("kanban_board"), F.chat.type == "private")
 async def cmd_kanban_board(message: Message, state: FSMContext):
-    if not await is_team_owner(message):
-        await message.answer("⛔ Только владелец команды может менять доску")
+    uid = message.from_user.id
+    async with get_session() as session:
+        team = await _resolve_dm_team(session, message)
+        member = await get_team_member(session, team.id, uid) if team else None
+    if not can_manage_kanban(team, member, uid):
+        await message.answer("⛔ Доступно только администраторам")
         return
 
     args = message.text.split(maxsplit=1)
-
-    async with get_session() as session:
-        team = await get_team_for_event(session, message)
 
     if not team or not team.kanban_token:
         await message.answer("❌ Сначала выполни /kanban_login")
@@ -434,8 +684,12 @@ async def cmd_kanban_board(message: Message, state: FSMContext):
 
 @router.callback_query(F.data.startswith("sb:"))
 async def cb_set_board(callback: CallbackQuery, state: FSMContext):
-    if not await is_team_owner(callback):
-        await callback.answer("⛔ Только владелец команды может менять доску", show_alert=True)
+    uid = callback.from_user.id
+    async with get_session() as session:
+        team = await _resolve_dm_team(session, callback)
+        member = await get_team_member(session, team.id, uid) if team else None
+    if not can_manage_kanban(team, member, uid):
+        await callback.answer("⛔ Доступно только администраторам", show_alert=True)
         return
     idx = int(callback.data.split(":")[1])
 
@@ -448,7 +702,6 @@ async def cb_set_board(callback: CallbackQuery, state: FSMContext):
     logger.info("Board selected via callback: chat=%s board_id=%s board_name=%s", callback.message.chat.id, board_id, board_name)
 
     async with get_session() as session:
-        team = await get_team_for_event(session, callback)
         token = await _decrypt_kanban_token(team)
         await set_active_board(session, team.chat_id if team else callback.message.chat.id, board_id, board_name)
 
@@ -484,14 +737,21 @@ async def cb_set_board(callback: CallbackQuery, state: FSMContext):
 
 @router.message(KanbanAuthStates.waiting_for_board)
 async def process_board(message: Message, state: FSMContext):
-    if not await is_team_owner(message):
-        await message.answer("⛔ Только владелец команды может менять доску")
+    text = await require_text(message)
+    if text is None:
+        return
+    uid = message.from_user.id
+    async with get_session() as session:
+        team = await _resolve_dm_team(session, message)
+        member = await get_team_member(session, team.id, uid) if team else None
+    if not can_manage_kanban(team, member, uid):
+        await message.answer("⛔ Доступно только администраторам")
         await state.clear()
         return
     data = await state.get_data()
     boards = data.get("boards", [])
     try:
-        idx = int(message.text.strip()) - 1
+        idx = int(text.strip()) - 1
         board_id, board_name = boards[idx]
     except (ValueError, IndexError):
         await message.answer("❌ Введи номер из списка")
@@ -500,7 +760,6 @@ async def process_board(message: Message, state: FSMContext):
     await state.clear()
 
     async with get_session() as session:
-        team = await get_team_for_event(session, message)
         await set_active_board(session, team.chat_id if team else message.chat.id, board_id, board_name)
 
     await message.answer(
@@ -520,11 +779,12 @@ async def cb_kanban_add(callback: CallbackQuery, state: FSMContext):
     if not team or not team.kanban_token or not board_id:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
-    await state.update_data(
-        kanban_token=await _decrypt_kanban_token(team),
-        kanban_board_id=board_id,
-    )
-    await state.set_state(KanbanCardStates.waiting_title)
+    data = {
+        "kanban_token": await _decrypt_kanban_token(team),
+        "kanban_board_id": board_id,
+    }
+    if not await enter_state(KanbanCardStates.waiting_title, state, callback, extra_data=data):
+        return
     kb = ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text="❌ Отмена")]],
         resize_keyboard=True,
@@ -547,11 +807,11 @@ async def cb_goto_main_confirm(callback: CallbackQuery) -> None:
     await callback.answer()
 
 @router.callback_query(F.data == "goto:main:yes")
-async def cb_goto_main_yes(callback: CallbackQuery, userbot_manager: UserbotManager) -> None:
+async def cb_goto_main_yes(callback: CallbackQuery, userbot_manager: UserbotManager, state: FSMContext) -> None:
     from src.bot.handlers.menu import cmd_menu
-    from aiogram.types import Message
+    await state.clear()
     await callback.answer()
-    await cmd_menu(callback.message, userbot_manager)
+    await cmd_menu(callback.message, userbot_manager, state)
 
 @router.callback_query(F.data == "goto:main:no")
 async def cb_goto_main_no(callback: CallbackQuery) -> None:
@@ -560,11 +820,14 @@ async def cb_goto_main_no(callback: CallbackQuery) -> None:
 
 @router.message(KanbanCardStates.waiting_title)
 async def process_card_title(message: Message, state: FSMContext):
-    if message.text == "❌ Отмена":
+    text = await require_text(message)
+    if text is None:
+        return
+    if text == "❌ Отмена":
         await state.clear()
         await message.answer("Отменено.", reply_markup=ReplyKeyboardRemove())
         return
-    await state.update_data(title=message.text.strip())
+    await state.update_data(title=text.strip())
     await state.set_state(KanbanCardStates.waiting_description)
     kb = ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text="⏭ Пропустить"), KeyboardButton(text="❌ Отмена")]],
@@ -575,11 +838,14 @@ async def process_card_title(message: Message, state: FSMContext):
 
 @router.message(KanbanCardStates.waiting_description)
 async def process_card_description(message: Message, state: FSMContext):
-    if message.text == "❌ Отмена":
+    text = await require_text(message)
+    if text is None:
+        return
+    if text == "❌ Отмена":
         await state.clear()
         await message.answer("Отменено.", reply_markup=ReplyKeyboardRemove())
         return
-    desc = "" if message.text == "⏭ Пропустить" else message.text.strip()
+    desc = "" if text == "⏭ Пропустить" else text.strip()
     await state.update_data(description=desc)
 
     data = await state.get_data()
@@ -764,8 +1030,12 @@ async def cb_kanban_stats(callback: CallbackQuery):
 
 @router.callback_query(F.data == "kanban:settings")
 async def cb_kanban_settings(callback: CallbackQuery):
-    if not await is_team_owner(callback):
-        await callback.answer("⛔ Только владелец команды может менять настройки доски", show_alert=True)
+    uid = callback.from_user.id
+    async with get_session() as session:
+        team = await get_team_for_event(session, callback)
+        member = await get_team_member(session, team.id, uid) if team else None
+    if not can_manage_kanban(team, member, uid):
+        await callback.answer("⛔ Доступно только администраторам", show_alert=True)
         return
     kb = InlineKeyboardBuilder()
     kb.row(InlineKeyboardButton(text="🔄 Сменить доску", callback_data="kanban:change_board"))
@@ -783,11 +1053,13 @@ async def cb_kanban_settings(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("kanban:change_board:"))
 async def cb_kanban_change_board(callback: CallbackQuery, state: FSMContext):
-    if not await is_team_owner(callback):
-        await callback.answer("⛔ Только владелец команды может менять доску", show_alert=True)
-        return
+    uid = callback.from_user.id
     async with get_session() as session:
         team = await get_team_for_event(session, callback)
+        member = await get_team_member(session, team.id, uid) if team else None
+    if not can_manage_kanban(team, member, uid):
+        await callback.answer("⛔ Доступно только администраторам", show_alert=True)
+        return
     board_id = get_board_id(team)
     if not team or not team.kanban_token or not board_id:
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
@@ -956,12 +1228,17 @@ async def cb_kanban_deadline(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Сначала настройте канбан-доску", show_alert=True)
         return
 
-    await state.update_data(
-        kanban_task_id=task_id,
-        kanban_token=await _decrypt_kanban_token(team),
-        kanban_board_id=board_id,
-    )
-    await state.set_state(KanbanCardStates.setting_deadline)
+    if not await enter_state(
+        KanbanCardStates.setting_deadline,
+        state,
+        callback,
+        extra_data={
+            "kanban_task_id": task_id,
+            "kanban_token": await _decrypt_kanban_token(team),
+            "kanban_board_id": board_id,
+        },
+    ):
+        return
     await callback.message.answer(
         "📅 <b>Введи дедлайн</b>\n\n"
         "Формат: ДД.ММ.ГГГГ (например 25.12.2026)\n"
@@ -973,7 +1250,10 @@ async def cb_kanban_deadline(callback: CallbackQuery, state: FSMContext):
 
 @router.message(KanbanCardStates.setting_deadline)
 async def process_deadline(message: Message, state: FSMContext):
-    text = message.text.strip()
+    text = await require_text(message)
+    if text is None:
+        return
+    text = text.strip()
     try:
         await message.delete()
     except Exception:

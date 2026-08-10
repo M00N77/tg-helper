@@ -119,6 +119,18 @@ class YouGileClient:
             data = response.json()
             return data.get("content", [])
 
+    async def get_tasks_by_assignee(self, assigned_to: str, limit: int = 100) -> List[Dict]:
+        """Получить задачи, назначенные на пользователя YouGile (assignedTo)."""
+        async with httpx.AsyncClient(trust_env=True, timeout=15.0) as client:
+            response = await client.get(
+                f"{self.base_url}/tasks",
+                headers=self.headers,
+                params={"assignedTo": assigned_to, "limit": limit}
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data.get("content", [])
+
     async def get_boards(self) -> list:
         """Получить список досок (не требует board_id) с кэшем 60 сек"""
         now = time.monotonic()

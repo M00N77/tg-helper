@@ -13,6 +13,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from src.bot.states import KanbanAuthStates
 from src.group_bot.permissions import get_role
+from src.bot.fsm_utils import enter_state
 
 logger = logging.getLogger(__name__)
 router = Router(name="setup_yougile")
@@ -39,8 +40,8 @@ async def cmd_setup_yougile(message: Message) -> None:
 
 async def start_yougile_login_flow(message: Message, state: FSMContext, chat_id: int) -> None:
     """Вызывается из /start yougile_login_{chat_id} (см. start.py) и запускает FSM."""
-    await state.set_state(KanbanAuthStates.waiting_login)
-    await state.update_data(setup_chat_id=chat_id)
+    if not await enter_state(KanbanAuthStates.waiting_login, state, message, extra_data={"setup_chat_id": chat_id}):
+        return
     await message.answer(
         "Введи логин (email) от аккаунта YouGile:",
         reply_markup=ReplyKeyboardMarkup(

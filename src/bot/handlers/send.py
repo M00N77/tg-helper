@@ -9,6 +9,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from src.bot.filters import OwnerOnly
+from src.bot.fsm_utils import enter_state
 from src.core.contact_resolver import ContactCandidate, resolve
 from src.db.repo import (
     create_pending_action,
@@ -218,8 +219,8 @@ async def cb_cancel(callback: CallbackQuery, state: FSMContext) -> None:
 @router.callback_query(F.data.startswith("send:edit:"))
 async def cb_edit(callback: CallbackQuery, state: FSMContext) -> None:
     action_id = int(callback.data.split(":")[2])
-    await state.set_state(SendStates.waiting_edit)
-    await state.set_data({"action_id": action_id})
+    if not await enter_state(SendStates.waiting_edit, state, callback, extra_data={"action_id": action_id}):
+        return
     await callback.message.answer("Введи новый текст сообщения. /cancel — отмена.")
     await callback.answer()
 

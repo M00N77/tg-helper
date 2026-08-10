@@ -7,6 +7,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from src.bot.filters import OwnerOrTeamMember, is_team_owner, get_team_for_event
 from src.bot.states import TeamStates
+from src.bot.fsm_utils import require_text, enter_state
 from src.db.models import Team, PendingInvite
 from src.db.repo import (
     create_team, add_team_member, get_or_create_user,
@@ -126,7 +127,8 @@ async def cmd_team(message: Message, state: FSMContext, command: CommandObject):
 @router.callback_query(F.data == "team:create")
 async def cb_team_create(callback: CallbackQuery, state: FSMContext):
     """Начало создания команды"""
-    await state.set_state(TeamStates.waiting_team_name)
+    if not await enter_state(TeamStates.waiting_team_name, state, callback):
+        return
     await callback.message.answer(
         "🏷 <b>Создание команды</b>\n\n"
         "Введите название команды:\n"
@@ -222,7 +224,10 @@ async def step_invite(
     message: Message,
     state: FSMContext,
 ) -> None:
-    username = message.text.strip().lstrip("@").lower()
+    text = await require_text(message)
+    if text is None:
+        return
+    username = text.strip().lstrip("@").lower()
     if not username:
         await message.answer("❌ Введите @username. Отмена — /cancel")
         return
@@ -312,8 +317,8 @@ async def cb_team_invite(callback: CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
-    await state.update_data(team_id=team.id)
-    await state.set_state(TeamStates.waiting_invite_username)
+    if not await enter_state(TeamStates.waiting_invite_username, state, callback, extra_data={"team_id": team.id}):
+        return
 
     await callback.message.answer(
         f"👥 <b>Приглашение в команду «{team.name}»</b>\n\n"
