@@ -21,7 +21,7 @@ def mock_message():
     return msg
 
 
-def _make_team(token="fake-token", board_id="board-123"):
+def _make_team(token="fake-token", board_id="board-12345"):
     team = MagicMock()
     team.kanban_token = token
     team.kanban_board_id = board_id
@@ -53,7 +53,11 @@ class TestExecKanbanIntent:
     @pytest.mark.asyncio
     async def test_no_kanban_token(self, mock_message):
         """Если токена нет — ответ с просьбой подключить доску."""
-        with patch("src.bot.handlers.free_text.get_team_by_chat", return_value=None):
+        with patch(
+            "src.bot.handlers.free_text.get_team_for_event",
+            new_callable=AsyncMock,
+            return_value=None,
+        ):
             await _exec_kanban_intent({"intent": "create_task", "title": "Test"}, mock_message)
         mock_message.answer.assert_awaited_once()
         assert "Доска для задач не выбрана" in mock_message.answer.call_args[0][0]
@@ -66,7 +70,7 @@ class TestExecKanbanIntent:
         mock_client.create_card = AsyncMock(return_value={"id": "new-task"})
 
         with (
-            patch("src.bot.handlers.free_text.get_team_by_chat", return_value=_make_team()),
+            patch("src.bot.handlers.free_text.get_team_for_event", new_callable=AsyncMock, return_value=_make_team()),
             patch("src.bot.handlers.yougile.YouGileClient", return_value=mock_client),
         ):
             await _exec_kanban_intent(
@@ -85,7 +89,7 @@ class TestExecKanbanIntent:
         mock_client.create_card = AsyncMock(return_value={"id": "new-task"})
 
         with (
-            patch("src.bot.handlers.free_text.get_team_by_chat", return_value=_make_team()),
+            patch("src.bot.handlers.free_text.get_team_for_event", new_callable=AsyncMock, return_value=_make_team()),
             patch("src.bot.handlers.yougile.YouGileClient", return_value=mock_client),
         ):
             await _exec_kanban_intent(
@@ -103,7 +107,7 @@ class TestExecKanbanIntent:
         mock_client.create_card = AsyncMock(return_value={"id": "new-task"})
 
         with (
-            patch("src.bot.handlers.free_text.get_team_by_chat", return_value=_make_team()),
+            patch("src.bot.handlers.free_text.get_team_for_event", new_callable=AsyncMock, return_value=_make_team()),
             patch("src.bot.handlers.yougile.YouGileClient", return_value=mock_client),
         ):
             await _exec_kanban_intent(
@@ -117,7 +121,7 @@ class TestExecKanbanIntent:
     async def test_create_task_missing_title(self, mock_message):
         """Нет названия задачи — ответ с просьбой уточнить."""
         with (
-            patch("src.bot.handlers.free_text.get_team_by_chat", return_value=_make_team()),
+            patch("src.bot.handlers.free_text.get_team_for_event", new_callable=AsyncMock, return_value=_make_team()),
         ):
             await _exec_kanban_intent(
                 {"intent": "create_task", "title": ""},
@@ -133,7 +137,7 @@ class TestExecKanbanIntent:
         mock_client.get_columns = AsyncMock(return_value=MOCK_COLUMNS)
 
         with (
-            patch("src.bot.handlers.free_text.get_team_by_chat", return_value=_make_team()),
+            patch("src.bot.handlers.free_text.get_team_for_event", new_callable=AsyncMock, return_value=_make_team()),
             patch("src.bot.handlers.yougile.YouGileClient", return_value=mock_client),
         ):
             await _exec_kanban_intent(
@@ -153,7 +157,7 @@ class TestExecKanbanIntent:
         mock_client.get_columns = AsyncMock(side_effect=RuntimeError("Connection failed"))
 
         with (
-            patch("src.bot.handlers.free_text.get_team_by_chat", return_value=_make_team()),
+            patch("src.bot.handlers.free_text.get_team_for_event", new_callable=AsyncMock, return_value=_make_team()),
             patch("src.bot.handlers.yougile.YouGileClient", return_value=mock_client),
         ):
             await _exec_kanban_intent(
@@ -176,7 +180,7 @@ class TestExecKanbanIntent:
         ])
 
         with (
-            patch("src.bot.handlers.free_text.get_team_by_chat", return_value=_make_team()),
+            patch("src.bot.handlers.free_text.get_team_for_event", new_callable=AsyncMock, return_value=_make_team()),
             patch("src.bot.handlers.yougile.YouGileClient", return_value=mock_client),
         ):
             await _exec_kanban_intent({"intent": "show_boards"}, mock_message)
@@ -201,7 +205,7 @@ class TestExecKanbanIntent:
         mock_client.move_card = AsyncMock(return_value={"id": "task-1"})
 
         with (
-            patch("src.bot.handlers.free_text.get_team_by_chat", return_value=_make_team()),
+            patch("src.bot.handlers.free_text.get_team_for_event", new_callable=AsyncMock, return_value=_make_team()),
             patch("src.bot.handlers.yougile.YouGileClient", return_value=mock_client),
         ):
             await _exec_kanban_intent(
@@ -221,7 +225,7 @@ class TestExecKanbanIntent:
         mock_client.get_cards_in_column = AsyncMock(return_value=[])
 
         with (
-            patch("src.bot.handlers.free_text.get_team_by_chat", return_value=_make_team()),
+            patch("src.bot.handlers.free_text.get_team_for_event", new_callable=AsyncMock, return_value=_make_team()),
             patch("src.bot.handlers.yougile.YouGileClient", return_value=mock_client),
         ):
             await _exec_kanban_intent(
@@ -236,7 +240,7 @@ class TestExecKanbanIntent:
     async def test_move_task_missing_params(self, mock_message):
         """Нет названия задачи или колонки."""
         with (
-            patch("src.bot.handlers.free_text.get_team_by_chat", return_value=_make_team()),
+            patch("src.bot.handlers.free_text.get_team_for_event", new_callable=AsyncMock, return_value=_make_team()),
         ):
             await _exec_kanban_intent(
                 {"intent": "move_task", "task_title": "", "target_column": ""},
@@ -249,7 +253,7 @@ class TestExecKanbanIntent:
     async def test_smalltalk(self, mock_message):
         """Smalltalk — отвечает текстом."""
         with (
-            patch("src.bot.handlers.free_text.get_team_by_chat", return_value=_make_team()),
+            patch("src.bot.handlers.free_text.get_team_for_event", new_callable=AsyncMock, return_value=_make_team()),
         ):
             await _exec_kanban_intent(
                 {"intent": "smalltalk", "reply": "Чем могу помочь?"},
@@ -261,7 +265,7 @@ class TestExecKanbanIntent:
     async def test_smalltalk_nested(self, mock_message):
         """Smalltalk с вложенным parameters."""
         with (
-            patch("src.bot.handlers.free_text.get_team_by_chat", return_value=_make_team()),
+            patch("src.bot.handlers.free_text.get_team_for_event", new_callable=AsyncMock, return_value=_make_team()),
         ):
             await _exec_kanban_intent(
                 {"intent": "smalltalk", "parameters": {"reply": "Привет!"}},
@@ -276,7 +280,7 @@ class TestExecKanbanIntent:
         mock_client.get_columns = AsyncMock(return_value=[])
 
         with (
-            patch("src.bot.handlers.free_text.get_team_by_chat", return_value=_make_team()),
+            patch("src.bot.handlers.free_text.get_team_for_event", new_callable=AsyncMock, return_value=_make_team()),
             patch("src.bot.handlers.yougile.YouGileClient", return_value=mock_client),
         ):
             await _exec_kanban_intent(

@@ -106,7 +106,7 @@ class TestBuildNewsDigest:
             patch("src.core.news.get_session", return_value=mock_session),
             patch("src.core.news.get_or_create_user", return_value=mock_owner),
             patch("src.core.news.list_contacts", return_value=[mock_channel]),
-            patch("src.llm.router.build_provider", return_value=None),
+            patch("src.llm.router.get_provider_chain", return_value=[]),
         ):
             result = await build_news_digest(
                 AsyncMock(), owner_telegram_id=1, topic="AI",
@@ -120,7 +120,7 @@ class TestBuildNewsDigest:
             patch("src.core.news.get_session", return_value=mock_session),
             patch("src.core.news.get_or_create_user", return_value=mock_owner),
             patch("src.core.news.list_contacts", return_value=[]),
-            patch("src.llm.router.build_provider", return_value=MagicMock()),
+            patch("src.llm.router.get_provider_chain", return_value=[MagicMock()]),
         ):
             result = await build_news_digest(
                 AsyncMock(), owner_telegram_id=1, topic="AI",
@@ -135,7 +135,7 @@ class TestBuildNewsDigest:
             patch("src.core.news.get_session", return_value=mock_session),
             patch("src.core.news.get_or_create_user", return_value=mock_owner),
             patch("src.core.news.list_contacts", side_effect=[[], [channel]]),
-            patch("src.llm.router.build_provider", return_value=MagicMock()),
+            patch("src.llm.router.get_provider_chain", return_value=[MagicMock()]),
             patch("src.core.news._gather_posts", return_value=[]),
         ):
             result = await build_news_digest(
@@ -153,7 +153,7 @@ class TestBuildNewsDigest:
             patch("src.core.news.get_session", return_value=mock_session),
             patch("src.core.news.get_or_create_user", return_value=mock_owner),
             patch("src.core.news.list_contacts", return_value=[mock_channel]),
-            patch("src.llm.router.build_provider", return_value=provider),
+            patch("src.llm.router.get_provider_chain", return_value=[provider]),
             patch("src.core.news._gather_posts", return_value=[]),
         ):
             result = await build_news_digest(
@@ -184,7 +184,7 @@ class TestBuildNewsDigest:
             patch("src.core.news.get_session", return_value=mock_session),
             patch("src.core.news.get_or_create_user", return_value=mock_owner),
             patch("src.core.news.list_contacts", return_value=[mock_channel]),
-            patch("src.llm.router.build_provider", return_value=provider),
+            patch("src.llm.router.get_provider_chain", return_value=[provider]),
             patch("src.core.news._gather_posts", return_value=posts),
         ):
             await build_news_digest(
@@ -213,7 +213,7 @@ class TestBuildNewsDigest:
             patch("src.core.news.get_session", return_value=mock_session),
             patch("src.core.news.get_or_create_user", return_value=mock_owner),
             patch("src.core.news.list_contacts", return_value=[mock_channel]),
-            patch("src.llm.router.build_provider", return_value=provider),
+            patch("src.llm.router.get_provider_chain", return_value=[provider]),
             patch("src.core.news._gather_posts", return_value=posts),
         ):
             result = await build_news_digest(
@@ -240,7 +240,7 @@ class TestBuildNewsDigest:
             patch("src.core.news.get_session", return_value=mock_session),
             patch("src.core.news.get_or_create_user", return_value=mock_owner),
             patch("src.core.news.list_contacts", return_value=[mock_channel]),
-            patch("src.llm.router.build_provider", return_value=provider),
+            patch("src.llm.router.get_provider_chain", return_value=[provider]),
             patch("src.core.news._gather_posts", return_value=posts),
         ):
             result = await build_news_digest(
@@ -263,7 +263,7 @@ class TestBuildNewsDigest:
             patch("src.core.news.get_session", return_value=mock_session),
             patch("src.core.news.get_or_create_user", return_value=mock_owner),
             patch("src.core.news.list_contacts", return_value=[mock_channel]),
-            patch("src.llm.router.build_provider", return_value=provider),
+            patch("src.llm.router.get_provider_chain", return_value=[provider]),
             patch("src.core.news._gather_posts", return_value=posts),
         ):
             result = await build_news_digest(

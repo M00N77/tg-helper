@@ -1,4 +1,4 @@
-"""Тесты для пагинации cb_kanban_tasks."""
+"""Тесты для cb_kanban_tasks."""
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -36,6 +36,7 @@ def _make_team():
     team = MagicMock()
     team.kanban_token = "token"
     team.kanban_board_id = "board-1"
+    team.active_board_id = "board-1"
     return team
 
 
@@ -48,7 +49,7 @@ def _make_client(cards):
 
 
 def _nav_buttons(keyboard):
-    """Return list of (text, callback_data) for the nav row (◀ or ▶)."""
+    """Return list of (text, callback_data) pagination buttons (◀ or ▶)."""
     for row in keyboard.inline_keyboard:
         for btn in row:
             if btn.text in ("◀", "▶"):
@@ -56,60 +57,55 @@ def _nav_buttons(keyboard):
     return []
 
 
-def _card_titles(markup):
-    """Return list of card titles from the inline keyboard."""
-    titles = []
-    for row in markup.inline_keyboard:
-        for btn in row:
-            if btn.callback_data.startswith("kanban:task:"):
-                titles.append(btn.text.removeprefix("📋 "))
-    return titles
-
-
-class TestKanbanTasksPagination:
+class TestKanbanTasksList:
     @pytest.mark.asyncio
-    async def test_page0_shows_first_10_and_has_next(self):
-        """page=0: первые 10 карточек, есть ▶, нет ◀."""
-        cb = _make_callback("kanban:tasks:col-1:0")
+    async def test_shows_all_column_cards(self):
+        """Показывает все карточки колонки (до 30) и без пагинации."""
+        cb = _make_callback("kanban:tasks:col-1")
         client = _make_client(MOCK_25_CARDS)
 
         with (
             patch("src.bot.handlers.kanban.get_session"),
-            patch("src.bot.handlers.kanban.get_team_by_chat", return_value=_make_team()),
+            patch(
+                "src.bot.handlers.kanban.get_team_for_event",
+                new_callable=AsyncMock,
+                return_value=_make_team(),
+            ),
             patch("src.bot.handlers.kanban.YouGileClient", return_value=client),
         ):
             await cb_kanban_tasks(cb)
 
         text = cb.message.edit_text.call_args[0][0]
-        assert "(10)" in text
+        assert "To Do (25)" in text
+        for i in range(25):
+            assert f"Task {i}" in text
 
-        markup = cb.message.edit_text.call_args[1]["reply_markup"]
-        titles = _card_titles(markup)
-        assert titles == ["Task 0", "Task 1", "Task 2", "Task 3", "Task 4",
-                          "Task 5", "Task 6", "Task 7", "Task 8", "Task 9"]
-
-        nav = _nav_buttons(markup)
-        assert nav == [("▶", "kanban:tasks:col-1:1")]
+        nav = _nav_buttons(cb.message.edit_text.call_args[1]["reply_markup"])
+        assert nav == []
 
     @pytest.mark.asyncio
-    async def test_page2_shows_last_5_and_has_prev(self):
-        """page=2: последние 5 карточек, есть ◀, нет ▶."""
-        cb = _make_callback("kanban:tasks:col-1:2")
-        client = _make_client(MOCK_25_CARDS)
+    async def test_shows_first_30_cards_and_notes_rest(self):
+        """Карточек больше 30 — показываем первые 30 и упоминаем остаток."""
+        cards_40 = [{"id": f"task-{i}", "title": f"Task {i}"} for i in range(40)]
+        cb = _make_callback("kanban:tasks:col-1")
+        client = _make_client(cards_40)
 
         with (
             patch("src.bot.handlers.kanban.get_session"),
-            patch("src.bot.handlers.kanban.get_team_by_chat", return_value=_make_team()),
+            patch(
+                "src.bot.handlers.kanban.get_team_for_event",
+                new_callable=AsyncMock,
+                return_value=_make_team(),
+            ),
             patch("src.bot.handlers.kanban.YouGileClient", return_value=client),
         ):
             await cb_kanban_tasks(cb)
 
         text = cb.message.edit_text.call_args[0][0]
-        assert "(5)" in text
+        assert "To Do (40)" in text
+        assert "Task 29" in text
+        assert "Task 30" not in text
+        assert "и ещё 10" in text
 
-        markup = cb.message.edit_text.call_args[1]["reply_markup"]
-        titles = _card_titles(markup)
-        assert titles == ["Task 20", "Task 21", "Task 22", "Task 23", "Task 24"]
-
-        nav = _nav_buttons(markup)
-        assert nav == [("◀", "kanban:tasks:col-1:1")]
+        nav = _nav_buttons(cb.message.edit_text.call_args[1]["reply_markup"])
+        assert nav == []

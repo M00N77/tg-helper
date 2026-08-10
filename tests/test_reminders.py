@@ -103,10 +103,13 @@ async def test_outside_work_hours():
         patch("src.core.reminders.get_or_create_user", return_value=owner),
         patch("src.core.reminders.notifier.notify", new_callable=AsyncMock) as mock_notify,
         patch("src.core.reminders.get_session") as mock_get_session,
+        patch("src.core.reminders.now_in_tz", return_value=datetime(2026, 6, 7, 9, 0, 0)),
     ):
         mock_get_session.return_value.__aenter__.return_value = _mock_session_execute([commitment])
         await _check_once(42)
         mock_notify.assert_not_awaited()
+        # вне рабочего окна ранний выход — до execute/session.get дело не доходит
+        mock_get_session.return_value.__aenter__.return_value.execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio
