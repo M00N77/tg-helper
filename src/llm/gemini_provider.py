@@ -1,9 +1,20 @@
 import asyncio
 
+import httpx
 from google import genai
+from google.genai import errors as genai_errors
 
 from src.config import LLMDefaults
-from src.llm.base import ChatMessage
+from src.llm.base import (
+    AuthError,
+    ChatMessage,
+    InvalidRequestError,
+    LLMError,
+    ProviderTimeoutError,
+    RateLimitedError,
+    ServerError,
+    parse_retry_after,
+)
 
 
 def _to_gemini_contents(messages: list[ChatMessage]) -> tuple[str | None, list[dict]]:
@@ -18,6 +29,31 @@ def _to_gemini_contents(messages: list[ChatMessage]) -> tuple[str | None, list[d
             contents.append({"role": role, "parts": [{"text": m.content}]})
     system = "\n\n".join(system_chunks) if system_chunks else None
     return system, contents
+
+
+def translate_gemini_error(exc: Exception) -> LLMError:
+    """Переводит SDK-исключения google-genai в иерархию LLMError."""
+    if isinstance(exc, genai_errors.APIError):
+        code = exc.code if isinstance(exc.code, int) else None
+        retry_after = None
+        response = getattr(exc, "response", None)
+        headers = getattr(response, "headers", None) if response is not None else None
+        if headers is not None:
+            retry_after = parse_retry_after(headers.get("retry-after"))
+
+        if code == 429:
+            return RateLimitedError(retry_after=retry_after, message=str(exc))
+        if code in (401, 403):
+            return AuthError(str(exc))
+        if code is not None and 400 <= code < 500:
+            return InvalidRequestError(str(exc))
+        if code is not None and code >= 500:
+            return ServerError(str(exc))
+    if isinstance(exc, httpx.TimeoutException):
+        return ProviderTimeoutError(f"gemini timeout: {exc}")
+    if isinstance(exc, httpx.HTTPError):
+        return ProviderTimeoutError(f"gemini network error: {exc}")
+    return LLMError(str(exc))
 
 
 class GeminiProvider:
@@ -50,7 +86,10 @@ class GeminiProvider:
             )
             return resp.text or ""
 
-        return await asyncio.to_thread(_call)
+        try:
+            return await asyncio.to_thread(_call)
+        except Exception as exc:
+            raise translate_gemini_error(exc) from exc
 
     async def embed(self, text: str) -> list[float]:
         def _call() -> list[float]:

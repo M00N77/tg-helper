@@ -3,7 +3,8 @@ import logging
 from openai import AsyncOpenAI
 
 from src.config import LLMDefaults
-from src.llm.base import ChatMessage
+from src.llm.base import ChatMessage, LLMError
+from src.llm.openai_provider import translate_openai_error
 
 
 logger = logging.getLogger(__name__)
@@ -50,7 +51,10 @@ class GroqProvider:
             except Exception as e:
                 logger.warning("Groq model %s failed: %s", model, e)
                 last_error = e
-        raise last_error  # type: ignore[misc]
+
+        if last_error is not None:
+            raise translate_openai_error(last_error) from last_error
+        raise LLMError("groq: no models to try")
 
     async def embed(self, text: str) -> list[float]:
         resp = await self._client.embeddings.create(
