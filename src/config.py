@@ -66,9 +66,9 @@ class Settings(BaseSettings):
 
         Railway предоставляет HTTPS-домен через WEBHOOK_BASE_URL;
         локально — http://localhost:PORT. None, если URL не задан."""
-        if not self.webhook_base_url:
+        if not self.WEBHOOK_BASE_URL:
             return None
-        return f"{self.webhook_base_url.rstrip('/')}/webhooks/mtslink"
+        return f"{self.WEBHOOK_BASE_URL.rstrip('/')}/webhooks/mtslink"
 
 
 settings = Settings()

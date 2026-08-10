@@ -55,7 +55,7 @@ def extract_record_id(payload: dict) -> str | None:
     return None
 
 
-def _health(_: web.Request) -> web.Response:
+async def _health(_: web.Request) -> web.Response:
     """Liveness endpoint. Не зависит от LLM/MTS Link — только факт работы процесса."""
     return web.json_response({"status": "ok"})
 
