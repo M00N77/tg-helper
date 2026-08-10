@@ -61,7 +61,12 @@ async def create_mtslink_room(
             msk_iso = datetime.now(MSK).strftime("%Y-%m-%dT%H:%M:%S+03:00")
         event_data["startsAtTimestamp"] = msk_iso
 
-        resp = await client.post(f"{MTSLINK_API}/events", headers=headers, data=event_data)
+        try:
+            resp = await client.post(f"{MTSLINK_API}/events", headers=headers, data=event_data)
+        except httpx.TimeoutException as exc:
+            raise RuntimeError("МТС Линк: таймаут при создании шаблона встречи") from exc
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"МТС Линк: сетевой сбой при создании шаблона встречи ({exc})") from exc
         if resp.status_code not in (200, 201):
             body = resp.text
             logger.warning(f"[MTSLink] create event failed: {resp.status_code} {body}")
@@ -76,14 +81,19 @@ async def create_mtslink_room(
         if msk_iso:
             session_data["startsAtTimestamp"] = msk_iso
 
-        sess_resp = await client.post(
-            f"{MTSLINK_API}/events/{event_id}/sessions",
-            headers=headers,
-            data=session_data or None,
-        )
+        try:
+            sess_resp = await client.post(
+                f"{MTSLINK_API}/events/{event_id}/sessions",
+                headers=headers,
+                data=session_data,
+            )
+        except httpx.TimeoutException as exc:
+            raise RuntimeError("МТС Линк: таймаут при создании сессии встречи") from exc
+        except httpx.HTTPError as exc:
+            raise RuntimeError(f"МТС Линк: сетевой сбой при создании сессии встречи ({exc})") from exc
         if sess_resp.status_code not in (200, 201):
             body = sess_resp.text
-            logger.warning(f"[MTSLink] create session failed: {resp.status_code} {body}")
+            logger.warning(f"[MTSLink] create session failed: {sess_resp.status_code} {body}")
             raise RuntimeError(f"МТС Линк: не удалось создать сессию встречи ({sess_resp.status_code})")
 
         session = sess_resp.json()
@@ -102,7 +112,13 @@ async def create_mtslink_room(
 
         callback_url = settings.mtslink_webhook_url
         if callback_url:
-            await register_record_webhook(api_token, event_id, callback_url)
+            try:
+                await register_record_webhook(api_token, event_id, callback_url)
+            except Exception as exc:
+                # soft-fail: встреча создана, webhook не критичен для неё
+                logger.warning(
+                    "Webhook registration failed (meeting itself is OK): %s", exc,
+                )
 
         if team_chat_id:
             from src.db.session import get_session

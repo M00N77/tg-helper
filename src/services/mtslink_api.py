@@ -19,19 +19,29 @@ async def register_record_webhook(
         "name": "TelegramHelper webhook",
         "eventTypeNames": ["recordFile.ready", "eventSession.ended"],
     }
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=body, headers=headers) as resp:
-            ok = resp.status in (200, 201, 409)
-            if not ok:
-                text = await resp.text()
-                if resp.status == 400 and "WEBHOOK_URL_ALREADY_EXISTS" in text:
-                    logger.info("Webhook already registered (400/ALREADY_EXISTS)")
-                    ok = True
-                else:
-                    logger.warning("register_webhook failed %d: %s", resp.status, text)
-            elif resp.status == 409:
-                logger.info("Webhook already registered (409)")
-            return ok
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+            async with session.post(url, json=body, headers=headers) as resp:
+                ok = resp.status in (200, 201, 409)
+                if not ok:
+                    text = await resp.text()
+                    if resp.status == 400 and "WEBHOOK_URL_ALREADY_EXISTS" in text:
+                        logger.info("Webhook already registered (400/ALREADY_EXISTS)")
+                        ok = True
+                    else:
+                        logger.warning("register_webhook failed %d: %s", resp.status, text)
+                elif resp.status == 409:
+                    logger.info("Webhook already registered (409)")
+                return ok
+    except asyncio.TimeoutError:
+        logger.warning("register_webhook timeout for %s", callback_url)
+        return False
+    except aiohttp.ClientError as exc:
+        logger.warning("register_webhook network error for %s: %s", callback_url, exc)
+        return False
+    except Exception as exc:
+        logger.warning("register_webhook unexpected error for %s: %s", callback_url, exc)
+        return False
 
 
 async def _trigger_conversion(token: str, event_session_id: str) -> int | None:
