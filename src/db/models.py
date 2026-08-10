@@ -17,17 +17,6 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from sqlalchemy.types import TypeDecorator
-
-
-class PkBigInt(TypeDecorator):
-    impl = BigInteger
-    cache_ok = True
-
-    def load_dialect_impl(self, dialect):
-        if dialect.name == "sqlite":
-            return dialect.type_descriptor(Integer())
-        return dialect.type_descriptor(BigInteger())
 
 
 class Base(DeclarativeBase):
@@ -37,7 +26,7 @@ class Base(DeclarativeBase):
 class User(Base):
     __tablename__ = "users"
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
     display_name: Mapped[str] = mapped_column(String(128), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -56,7 +45,7 @@ class User(Base):
 class UserSettings(Base):
     __tablename__ = "user_settings"
 
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     auto_reply_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     llm_provider: Mapped[str] = mapped_column(String(16), default="openai")
     use_heavy_model: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -87,7 +76,7 @@ class UserSettings(Base):
 class TelegramSession(Base):
     __tablename__ = "telegram_sessions"
 
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     api_id: Mapped[int] = mapped_column(BigInteger)
     api_hash_enc: Mapped[str] = mapped_column(Text)
     session_string_enc: Mapped[str] = mapped_column(Text)
@@ -102,8 +91,8 @@ class ApiKey(Base):
     __tablename__ = "api_keys"
     __table_args__ = (UniqueConstraint("user_id", "provider", name="uq_api_key_user_provider"),)
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"))
     provider: Mapped[str] = mapped_column(String(16))
     key_enc: Mapped[str] = mapped_column(Text)
 
@@ -116,8 +105,8 @@ class Contact(Base):
     __tablename__ = "contacts"
     __table_args__ = (UniqueConstraint("user_id", "peer_id", name="uq_contact_user_peer"),)
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     peer_id: Mapped[int] = mapped_column(BigInteger, index=True)
     peer_kind: Mapped[str] = mapped_column(String(16))  # user | chat | channel
     is_bot: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -140,8 +129,8 @@ class Message(Base):
         Index("ix_messages_user_peer_date", "user_id", "peer_id", "date"),
     )
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     peer_id: Mapped[int] = mapped_column(BigInteger, index=True)
     message_id: Mapped[int] = mapped_column(BigInteger)
     sender_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
@@ -162,8 +151,8 @@ class Commitment(Base):
 
     __tablename__ = "commitments"
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     peer_id: Mapped[int] = mapped_column(BigInteger, index=True)
     peer_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
     message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
@@ -181,8 +170,8 @@ class AutoReplyLog(Base):
 
     __tablename__ = "auto_reply_logs"
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     peer_id: Mapped[int] = mapped_column(BigInteger, index=True)
     peer_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
     incoming_text: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -196,8 +185,8 @@ class IndexJob(Base):
     __tablename__ = "index_jobs"
     __table_args__ = (UniqueConstraint("user_id", "peer_id", name="uq_index_user_peer"),)
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     peer_id: Mapped[int] = mapped_column(BigInteger, index=True)
     last_indexed_message_id: Mapped[int] = mapped_column(BigInteger, default=0)
     last_indexed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -219,8 +208,8 @@ class PendingAction(Base):
 
     __tablename__ = "pending_actions"
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     kind: Mapped[str] = mapped_column(String(32))  # send_message | catchup_reply | ...
     payload: Mapped[dict] = mapped_column(JSON)  # JSON-объект
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -231,8 +220,8 @@ class NewsTopic(Base):
 
     __tablename__ = "news_topics"
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     topic: Mapped[str] = mapped_column(String(256))
     hours: Mapped[int] = mapped_column(Integer, default=24)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -242,7 +231,7 @@ class NewsTopic(Base):
 class Team(Base):
     __tablename__ = "teams"
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(128), default="")
     chat_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
     is_supergroup: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -293,8 +282,8 @@ class TeamMember(Base):
     __tablename__ = "team_members"
     __table_args__ = (UniqueConstraint("team_id", "telegram_id", name="uq_team_member"),)
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
-    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("teams.id", ondelete="CASCADE"), index=True)
     telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
     role: Mapped[str] = mapped_column(String(32), default="member")
     display_name: Mapped[str | None] = mapped_column(String(128), nullable=True, default=None)
@@ -316,8 +305,8 @@ class PendingTeamTask(Base):
 
     __tablename__ = "pending_team_tasks"
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
-    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("teams.id", ondelete="CASCADE"), index=True)
     creator_telegram_id: Mapped[int] = mapped_column(BigInteger)
     assignee_telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
     title: Mapped[str] = mapped_column(String(256))
@@ -342,9 +331,9 @@ class YouGileUserAlias(Base):
         UniqueConstraint("team_id", "alias", name="uq_yougile_alias"),
     )
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     team_id: Mapped[int] = mapped_column(
-        ForeignKey("teams.id", ondelete="CASCADE"), index=True
+        BigInteger, ForeignKey("teams.id", ondelete="CASCADE"), index=True
     )
     alias: Mapped[str] = mapped_column(String(128))
     yougile_user_id: Mapped[str] = mapped_column(String(128))
@@ -357,8 +346,8 @@ class PendingTask(Base):
 
     __tablename__ = "pending_tasks"
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
-    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("teams.id", ondelete="CASCADE"), index=True)
     task_title: Mapped[str] = mapped_column(String(256))
     task_description: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     status: Mapped[str] = mapped_column(String(16), default="pending")
@@ -371,7 +360,7 @@ class PendingInvite(Base):
         UniqueConstraint("team_id", "username", name="uq_pending_invite"),
     )
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     team_id: Mapped[int] = mapped_column(
         ForeignKey("teams.id", ondelete="CASCADE"), index=True
     )
@@ -385,8 +374,8 @@ class Meeting(Base):
 
     __tablename__ = "meetings"
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
-    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("teams.id", ondelete="CASCADE"), index=True)
     meeting_url: Mapped[str] = mapped_column(Text)
     mtslink_event_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     mtslink_record_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -413,8 +402,8 @@ class MeetingTask(Base):
 
     __tablename__ = "meeting_tasks"
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
-    meeting_id: Mapped[int] = mapped_column(ForeignKey("meetings.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    meeting_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("meetings.id", ondelete="CASCADE"), index=True)
     title: Mapped[str] = mapped_column(String(256))
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     assignee_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -432,8 +421,8 @@ class Standup(Base):
         UniqueConstraint("team_id", "user_id", "date", name="uq_standup_team_user_date"),
     )
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
-    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("teams.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[int] = mapped_column(BigInteger)
     display_name: Mapped[str] = mapped_column(String(128), default="")
     date: Mapped[datetime] = mapped_column(DateTime, index=True)
@@ -449,8 +438,8 @@ class Standup(Base):
 class Blocker(Base):
     __tablename__ = "blockers"
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
-    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("teams.id", ondelete="CASCADE"), index=True)
     reported_by: Mapped[int] = mapped_column(BigInteger)
     display_name: Mapped[str] = mapped_column(String(128), default="")
     description: Mapped[str] = mapped_column(Text)
@@ -467,8 +456,8 @@ class Blocker(Base):
 class TimeLog(Base):
     __tablename__ = "time_logs"
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
-    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("teams.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[int] = mapped_column(BigInteger)
     source: Mapped[str] = mapped_column(String(32))
     source_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -482,8 +471,8 @@ class TimeLog(Base):
 class SociometryCache(Base):
     __tablename__ = "sociometry_cache"
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
-    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("teams.id", ondelete="CASCADE"), index=True)
     period_start: Mapped[datetime] = mapped_column(DateTime)
     period_end: Mapped[datetime] = mapped_column(DateTime)
     snapshot: Mapped[dict] = mapped_column(JSON)
@@ -495,8 +484,8 @@ class ActivitySession(Base):
 
     __tablename__ = "activity_sessions"
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
-    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("teams.id", ondelete="CASCADE"), index=True)
     activity_code: Mapped[str] = mapped_column(String(64), index=True)  # код механики из registry
     kind: Mapped[str] = mapped_column(String(32), default="pulse")  # pulse | metaphor | quiz | icebreaker
     is_anonymous: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -526,9 +515,9 @@ class ActivityResponse(Base):
         UniqueConstraint("session_id", "respondent_hash", name="uq_activity_resp_session_hash"),
     )
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     session_id: Mapped[int] = mapped_column(
-        ForeignKey("activity_sessions.id", ondelete="CASCADE"), index=True
+        BigInteger, ForeignKey("activity_sessions.id", ondelete="CASCADE"), index=True
     )
     respondent_hash: Mapped[str] = mapped_column(String(64), index=True)  # HMAC-hex, всегда заполнен
     user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)  # NULL для анонимных
@@ -542,8 +531,8 @@ class ActivityResponse(Base):
 class MessageSentiment(Base):
     __tablename__ = "message_sentiments"
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
-    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("teams.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[int] = mapped_column(BigInteger, index=True)
     display_name: Mapped[str] = mapped_column(String(128), default="")
     sentiment: Mapped[str] = mapped_column(String(16))
@@ -555,8 +544,8 @@ class MessageSentiment(Base):
 class EmailMessage(Base):
     __tablename__ = "email_messages"
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
-    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("teams.id", ondelete="CASCADE"), index=True)
     subject: Mapped[str] = mapped_column(String(512))
     body: Mapped[str] = mapped_column(Text)
     sender: Mapped[str] = mapped_column(String(256))
@@ -573,8 +562,8 @@ class RolePermission(Base):
         UniqueConstraint("team_id", "role", name="uq_role_per_team"),
     )
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
-    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("teams.id", ondelete="CASCADE"), index=True)
     role: Mapped[str] = mapped_column(String(32))
     allowed_intents: Mapped[list] = mapped_column(JSON)
     denied_intents: Mapped[list] = mapped_column(JSON)
@@ -586,8 +575,8 @@ class TeamDictionary(Base):
     __tablename__ = "team_dictionaries"
     __table_args__ = (UniqueConstraint("team_id", "term", name="uq_team_dictionary_term"),)
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
-    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("teams.id", ondelete="CASCADE"), index=True)
     term: Mapped[str] = mapped_column(String(256))
     definition: Mapped[str] = mapped_column(Text)
     scope: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -600,8 +589,8 @@ class TeamDictionary(Base):
 class MessageRisk(Base):
     __tablename__ = "message_risks"
 
-    id: Mapped[int] = mapped_column(PkBigInt, primary_key=True, autoincrement=True)
-    team_id: Mapped[int] = mapped_column(ForeignKey("teams.id", ondelete="CASCADE"), index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    team_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("teams.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[int] = mapped_column(BigInteger, index=True)
     display_name: Mapped[str] = mapped_column(String(256))
     message_text: Mapped[str] = mapped_column(Text)
