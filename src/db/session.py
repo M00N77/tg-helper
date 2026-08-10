@@ -80,6 +80,11 @@ async def init_db() -> None:
         await conn.run_sync(_check_revision)
 
 
+async def close_db() -> None:
+    """Корректно освобождает пул соединений при остановке приложения."""
+    await engine.dispose()
+
+
 @asynccontextmanager
 async def get_session() -> AsyncIterator[AsyncSession]:
     async with SessionLocal() as session:
