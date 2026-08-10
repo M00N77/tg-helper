@@ -497,15 +497,18 @@ async def cb_kanban_tasks(callback: CallbackQuery):
 
 
 @router.message(Command("kanban_login"), F.chat.type == "private")
-async def cmd_kanban_login(message: Message, state: FSMContext):
+async def cmd_kanban_login(event: Message | CallbackQuery, state: FSMContext):
+    """Настройка авторизации YouGile в ЛС. Принимает Message или CallbackQuery,
+    чтобы из меню не терялся реальный from_user (у callback.message — это бот)."""
     from src.group_bot.permissions import get_role
 
-    uid = message.from_user.id
+    msg = event if isinstance(event, Message) else event.message
+    uid = event.from_user.id if event.from_user else 0
     async with get_session() as session:
         teams = await get_user_teams(session, uid)
     team = teams[0] if teams else None
     if team is None:
-        await message.answer(
+        await msg.answer(
             "❌ У тебя нет команды, которой ты владеешь или в которой ты админ.\n"
             "Создай команду через /i_am_director в групповом чате, "
             "либо запусти настройку из группы командой /setup_yougile."
@@ -513,11 +516,11 @@ async def cmd_kanban_login(message: Message, state: FSMContext):
         return
     role = await get_role(team.chat_id, uid)
     if role != "admin":
-        await message.answer("⛔ Доступно только администраторам")
+        await msg.answer("⛔ Доступно только администраторам")
         return
     await state.set_state(KanbanAuthStates.waiting_login)
     await state.update_data(setup_chat_id=team.chat_id)
-    await message.answer(
+    await msg.answer(
         "Введи логин (email) от аккаунта YouGile:",
         reply_markup=ReplyKeyboardMarkup(
             keyboard=[[KeyboardButton(text="❌ Отмена")]],
@@ -600,26 +603,34 @@ async def process_password(message: Message, state: FSMContext):
 
 
 @router.message(Command("kanban_board"), F.chat.type == "private")
-async def cmd_kanban_board(message: Message, state: FSMContext):
-    uid = message.from_user.id
+async def cmd_kanban_board(event: Message | CallbackQuery, state: FSMContext):
+    """Выбор доски YouGile в ЛС. Принимает Message или CallbackQuery,
+    чтобы из меню не терялся реальный from_user (у callback.message — это бот)."""
+    msg = event if isinstance(event, Message) else event.message
+    uid = event.from_user.id if event.from_user else 0
     async with get_session() as session:
-        team = await _resolve_dm_team(session, message)
+        team = await _resolve_dm_team(session, event)
         member = await get_team_member(session, team.id, uid) if team else None
     if not can_manage_kanban(team, member, uid):
-        await message.answer("⛔ Доступно только администраторам")
+        await msg.answer("⛔ Доступно только администраторам")
         return
 
-    args = message.text.split(maxsplit=1)
+    # Аргументы команды читаются только у реального Message
+    # (у callback.message текст — это текст меню, а не команда).
+    if isinstance(event, Message):
+        args = event.text.split(maxsplit=1)
+    else:
+        args = []
 
     if not team or not team.kanban_token:
-        await message.answer("❌ Сначала выполни /kanban_login")
+        await msg.answer("❌ Сначала выполни /kanban_login")
         return
 
     # Fallback: аргумент передан явно — сохраняем как активную доску
     if len(args) > 1:
         board_id = args[1].strip()
         if len(board_id) < 10:
-            await message.answer("⚠️ Некорректный ID доски. Используй /kanban_board без аргумента для выбора из списка.")
+            await msg.answer("⚠️ Некорректный ID доски. Используй /kanban_board без аргумента для выбора из списка.")
             return
         client = YouGileClient(await _decrypt_kanban_token(team), board_id)
         try:
@@ -629,7 +640,7 @@ async def cmd_kanban_board(message: Message, state: FSMContext):
         board_name = next((b["title"] for b in boards if b["id"] == board_id), board_id)
         async with get_session() as session:
             await set_active_board(session, team.chat_id, board_id, board_name)
-        await message.answer(
+        await msg.answer(
             f"✅ Активная доска: <b>{board_name}</b>\n"
             "Все новые задачи будут создаваться сюда."
         )
@@ -640,11 +651,11 @@ async def cmd_kanban_board(message: Message, state: FSMContext):
     try:
         boards = await client.get_boards()
     except Exception as e:
-        await message.answer(f"❌ Ошибка при получении досок: {e}")
+        await msg.answer(f"❌ Ошибка при получении досок: {e}")
         return
 
     if not boards:
-        await message.answer("❌ Досок не найдено в YouGile")
+        await msg.answer("❌ Досок не найдено в YouGile")
         return
 
     # Одна доска — выбираем сразу
@@ -652,7 +663,7 @@ async def cmd_kanban_board(message: Message, state: FSMContext):
         b = boards[0]
         async with get_session() as session:
             await set_active_board(session, team.chat_id, b["id"], b["title"])
-        await message.answer(
+        await msg.answer(
             f"✅ Активная доска: <b>{b['title']}</b>\n"
             "Все новые задачи будут создаваться сюда."
         )
@@ -667,7 +678,7 @@ async def cmd_kanban_board(message: Message, state: FSMContext):
                 text=b["title"],
                 callback_data=f"sb:{i}",
             ))
-        await message.answer(
+        await msg.answer(
             "📋 Выбери активную доску:",
             reply_markup=kb.as_markup(),
         )
@@ -679,7 +690,7 @@ async def cmd_kanban_board(message: Message, state: FSMContext):
         text += f"{i}. {b['title']}\n"
     await state.update_data(boards=[(b["id"], b["title"]) for b in boards])
     await state.set_state(KanbanAuthStates.waiting_for_board)
-    await message.answer(text)
+    await msg.answer(text)
 
 
 @router.callback_query(F.data.startswith("sb:"))

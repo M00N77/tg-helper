@@ -282,18 +282,20 @@ async def cb_menu_kanban(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data == "menu:kanban:login")
 async def cb_menu_kanban_login(callback: CallbackQuery, state: FSMContext) -> None:
-    # RBAC-проверка (владелец/админ) выполняется внутри cmd_kanban_login
+    # RBAC-проверка (владелец/админ) выполняется внутри cmd_kanban_login.
+    # Передаём callback целиком — callback.message.from_user это бот.
     await callback.answer()
     from src.bot.handlers.kanban import cmd_kanban_login
-    await cmd_kanban_login(callback.message, state)
+    await cmd_kanban_login(callback, state)
 
 
 @router.callback_query(F.data == "menu:kanban:board")
 async def cb_menu_kanban_board(callback: CallbackQuery, state: FSMContext) -> None:
-    # RBAC-проверка (владелец/админ) выполняется внутри cmd_kanban_board
+    # RBAC-проверка (владелец/админ) выполняется внутри cmd_kanban_board.
+    # Передаём callback целиком — callback.message.from_user это бот.
     await callback.answer()
     from src.bot.handlers.kanban import cmd_kanban_board
-    await cmd_kanban_board(callback.message, state)
+    await cmd_kanban_board(callback, state)
 
 
 @router.callback_query(F.data.startswith("menu:kanban:open:"))
