@@ -30,5 +30,7 @@ COPY src/ ./src/
 # data — монтируется томом снаружи (БД, сессии, qdrant, media, кэш моделей)
 RUN mkdir -p /app/data
 
+EXPOSE 8080
+
 # alembic upgrade head выполняется при старте контейнера (см. entrypoint)
 CMD ["sh", "-c", "alembic upgrade head && python -m src.main"]
