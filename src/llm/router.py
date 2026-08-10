@@ -151,9 +151,20 @@ async def _call_with_retry(
                 attempt,
                 retry_after=getattr(last_error, "retry_after", None),
             )
+            # Структурированная строка лога, например:
+            #   openai: 429 attempt=1/2 retry_after=2.1 retrying in 2.1s
+            retry_after = (
+                getattr(last_error, "retry_after", None)
+                if isinstance(last_error, RateLimitedError)
+                else None
+            )
+            retry_after_part = (
+                f" retry_after={retry_after:.1f}" if retry_after is not None else ""
+            )
             logger.warning(
-                "Provider %s failed (attempt %d/%d): %s; retry in %.1fs",
-                provider.name, attempt + 1, MAX_RETRIES, last_error, delay,
+                "%s: %s attempt=%d/%d%s retrying in %.1fs",
+                provider.name, _error_slug(last_error),
+                attempt + 1, MAX_RETRIES, retry_after_part, delay,
             )
             await asyncio.sleep(delay)
 
@@ -174,22 +185,47 @@ def _human_reason(err: LLMError | None) -> str:
     return "unavailable"
 
 
-def _switch_message(name: str, err: LLMError) -> str:
+def _error_slug(err: LLMError) -> str:
+    """Короткий статус ошибки для структурированного лога retry."""
+    if isinstance(err, RateLimitedError):
+        return "429"
+    if isinstance(err, AuthError):
+        return "auth"
+    if isinstance(err, InvalidRequestError):
+        return "400"
+    if isinstance(err, ServerError):
+        return "5xx"
+    if isinstance(err, ProviderTimeoutError):
+        return "timeout"
+    return "error"
+
+
+def _switch_message(name: str, err: LLMError, next_name: str | None = None) -> str:
+    """Сообщение пользователю при переключении провайдера.
+
+    Отправляется один раз на каждый переключённый провайдер —
+    детали ретраев остаются в серверных логах.
+    """
+    next_part = (
+        f"Переключаюсь на {next_name}..."
+        if next_name
+        else "Переключаюсь на следующего провайдера..."
+    )
     if isinstance(err, AuthError):
         return (
-            f"⚠️ {name} недоступен: API-ключ недействителен.\n"
-            f"Замените ключ {name} в настройках.\n\n"
-            f"Переключаюсь на следующего провайдера..."
+            f"⚠️ {name}: API-ключ недействителен.\n"
+            f"Замените ключ в настройках.\n\n"
+            f"{next_part}"
         )
     if isinstance(err, InvalidRequestError):
         return (
-            f"⚠️ {name} отклонил запрос.\n"
-            f"Проверьте модель/параметры запроса.\n\n"
-            f"Переключаюсь на следующего провайдера..."
+            f"⚠️ {name} недоступен: провайдер вернул ошибку 400.\n"
+            f"Проверьте и замените API-ключ {name}.\n\n"
+            f"{next_part}"
         )
     return (
-        f"⚠️ Модель {name} недоступна.\n"
-        f"Переключаюсь на следующего провайдера..."
+        f"⚠️ {name} временно недоступен.\n"
+        f"{next_part}"
     )
 
 
@@ -230,7 +266,12 @@ async def llm_with_fallback(
 
         errors.append((_provider_label(provider.name), _human_reason(err)))
         if idx < len(providers) - 1:
-            await _notify(notify_bot, notify_chat_id, _switch_message(_provider_label(provider.name), err))
+            next_label = _provider_label(providers[idx + 1].name)
+            await _notify(
+                notify_bot,
+                notify_chat_id,
+                _switch_message(_provider_label(provider.name), err, next_label),
+            )
 
     report = "❌ Все доступные LLM-провайдеры недоступны.\n\n" + "\n".join(
         f"{name} — {reason}" for name, reason in errors

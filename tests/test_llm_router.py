@@ -145,7 +145,7 @@ async def test_fallback_switches_provider_with_auth_notification():
     assert "недействителен" in notifier.sent[0]
 
 
-async def test_fallback_400_message_does_not_blame_key():
+async def test_fallback_400_message_suggests_key_replace():
     notifier = FakeNotifier()
     providers = [
         FakeProvider("openai", error=InvalidRequestError("bad model")),
@@ -155,8 +155,75 @@ async def test_fallback_400_message_does_not_blame_key():
         providers, [ChatMessage("user", "hi")],
         notify_bot=notifier, notify_chat_id=42,
     )
-    assert "отклонил запрос" in notifier.sent[0]
-    assert "недействителен" not in notifier.sent[0]
+    msg = notifier.sent[0]
+    assert "ошибку 400" in msg
+    assert "замените API-ключ" in msg
+    assert "Переключаюсь на Gemini" in msg
+    assert "недействителен" not in msg
+
+
+async def test_fallback_401_message_replaces_key_instruction():
+    notifier = FakeNotifier()
+    providers = [
+        FakeProvider("openai", error=AuthError("bad key")),
+        FakeProvider("gemini"),
+    ]
+    await llm_with_fallback(
+        providers, [ChatMessage("user", "hi")],
+        notify_bot=notifier, notify_chat_id=42,
+    )
+    msg = notifier.sent[0]
+    assert "API-ключ недействителен" in msg
+    assert "Замените ключ в настройках" in msg
+    assert "Переключаюсь на Gemini" in msg
+
+
+async def test_fallback_429_single_notification_no_retry_spam(no_sleep):
+    """429 исчерпал ретраи -> ровно одно сообщение, без деталей каждого retry."""
+    notifier = FakeNotifier()
+    providers = [
+        FakeProvider("openai", error=RateLimitedError(retry_after=None)),
+        FakeProvider("gemini"),
+    ]
+    text = await llm_with_fallback(
+        providers, [ChatMessage("user", "hi")],
+        notify_bot=notifier, notify_chat_id=42,
+    )
+    assert text == "ok-text"
+    assert len(notifier.sent) == 1
+    msg = notifier.sent[0]
+    assert "временно недоступен" in msg
+    assert "Переключаюсь на Gemini" in msg
+    assert "attempt" not in msg
+    assert "retry_after" not in msg
+
+
+async def test_fallback_no_notification_when_single_provider(no_sleep):
+    notifier = FakeNotifier()
+    providers = [FakeProvider("openai", error=RateLimitedError(retry_after=None))]
+    with pytest.raises(RuntimeError):
+        await llm_with_fallback(
+            providers, [ChatMessage("user", "hi")],
+            notify_bot=notifier, notify_chat_id=42,
+        )
+    assert notifier.sent == []
+
+
+async def test_retry_logs_structured_attempt_info(caplog, no_sleep):
+    provider = FakeProvider(error=RateLimitedError(retry_after=1.5))
+    result, err = await _call_with_retry(provider, [ChatMessage("user", "hi")], heavy=False)
+    assert result is None
+    assert isinstance(err, RateLimitedError)
+
+    structured = [
+        r.getMessage()
+        for r in caplog.records
+        if "attempt=" in r.getMessage() and r.name == "src.llm.router"
+    ]
+    assert structured, "expected structured retry log lines"
+    first = structured[0]
+    assert first.startswith("fake: 429 attempt=1/")
+    assert "retry_after=1.5" in first
 
 
 async def test_fallback_all_failed_report(no_sleep):
