@@ -15,6 +15,7 @@ from src.core.standup_scheduler import standup_scheduler_loop, blocker_escalatio
 from src.core.vector_store import vector_store
 from src.group_bot.activities.scheduler import activities_scheduler_loop
 from src.db.session import init_db, close_db
+from src.services.webhook_server import run_webhook_server
 from src.userbot.manager import UserbotManager
 
 
@@ -42,6 +43,7 @@ async def _clean_trash_loop() -> None:
 def _background_loops() -> dict[str, Coroutine[None, None, None]]:
     """Именованные coroutine-объекты фоновых задач (стартуют в main)."""
     return {
+        "webhook-server": run_webhook_server(),
         "digest-scheduler": digest_scheduler_loop(),
         "evening-digest": evening_digest_loop(),
         "reminders-loop": reminders_loop(),

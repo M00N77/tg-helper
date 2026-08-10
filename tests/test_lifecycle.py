@@ -93,5 +93,17 @@ async def test_shutdown_all_cancels_everything():
     assert all(t.cancelled() for t in tasks.values())
 
 
+async def test_background_loops_include_webhook_server():
+    """P0-фикс: webhook-сервер должен быть supervised-задачей lifecycle."""
+    from src.main import _background_loops
+
+    loops = _background_loops()
+    try:
+        assert "webhook-server" in loops
+    finally:
+        for coro in loops.values():
+            coro.close()
+
+
 async def _ok_coro():
     return 42
