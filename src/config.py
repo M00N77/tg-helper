@@ -57,9 +57,18 @@ class Settings(BaseSettings):
 
     WEBHOOK_BASE_URL: str = ""
     WEBHOOK_SECRET: str = ""
-    NGROK_AUTHTOKEN: str = ""
-    NGROK_ENABLED: bool = False
-    WEBHOOK_PORT: int = 8080
+    # Порт HTTP-сервера (Railway передаёт PORT сам; локально по умолчанию 8080)
+    PORT: int = 8080
+
+    @property
+    def mtslink_webhook_url(self) -> str | None:
+        """Публичный URL для регистрации вебхука МТС Линк.
+
+        Railway предоставляет HTTPS-домен через WEBHOOK_BASE_URL;
+        локально — http://localhost:PORT. None, если URL не задан."""
+        if not self.webhook_base_url:
+            return None
+        return f"{self.webhook_base_url.rstrip('/')}/webhooks/mtslink"
 
 
 settings = Settings()

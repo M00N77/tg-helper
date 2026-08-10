@@ -98,9 +98,9 @@ async def create_mtslink_room(
             raise RuntimeError("МТС Линк: ответ не содержит ссылку на встречу")
 
         from src.services.mtslink_api import register_record_webhook
-        import src.services.webhook_server as ws_module
+        from src.config import settings
 
-        callback_url = getattr(ws_module, "PUBLIC_WEBHOOK_URL", None)
+        callback_url = settings.mtslink_webhook_url
         if callback_url:
             await register_record_webhook(api_token, event_id, callback_url)
 

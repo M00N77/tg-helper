@@ -52,9 +52,6 @@ from src.core.notifier import notifier
 from src.bot.middlewares.invite_check import InviteCheckMiddleware
 from src.userbot.manager import UserbotManager
 
-from src.services.ngrok_tunnel import start_tunnel, stop_tunnel
-from src.services.webhook_server import start_webhook_server, stop_webhook_server
-
 
 logger = logging.getLogger(__name__)
 
@@ -166,24 +163,13 @@ async def run_bot(userbot_manager: UserbotManager) -> None:
         me = await bot.get_me()
         logger.info("Control bot started as @%s", me.username)
 
-        from src.services import webhook_server as ws_module
-
-        public_url = await start_tunnel()
-        if public_url:
-            ws_module.PUBLIC_WEBHOOK_URL = public_url + "/webhook/mtslink"
-            logger.info("Webhook URL: %s", ws_module.PUBLIC_WEBHOOK_URL)
-        await start_webhook_server()
-
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     except Exception:
         logger.exception("Fatal error in run_bot")
         raise
     finally:
-        await stop_webhook_server()
-        await stop_tunnel()
         await bot.session.close()
         storage_close = getattr(dp.storage, 'close', None)
         if storage_close:
             await storage_close()
-        await userbot_manager.close_all()
         logger.info("Bot shut down complete")

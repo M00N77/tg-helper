@@ -14,7 +14,6 @@ from src.config import settings
 logger = logging.getLogger(__name__)
 
 _runner = None
-PUBLIC_WEBHOOK_URL: str = ""
 
 _active_tasks: set[asyncio.Task] = set()
 
@@ -54,6 +53,11 @@ def extract_record_id(payload: dict) -> str | None:
         if val:
             return str(val)
     return None
+
+
+def _health(_: web.Request) -> web.Response:
+    """Liveness endpoint. Не зависит от LLM/MTS Link — только факт работы процесса."""
+    return web.json_response({"status": "ok"})
 
 
 async def handle_mtslink_webhook(request: web.Request) -> web.Response:
@@ -280,17 +284,41 @@ async def download_and_process_meeting(
                 pass
 
 
-async def start_webhook_server() -> None:
-    global _runner
+def build_app() -> web.Application:
+    """Собирает aiohttp-приложение с webhook и health endpoint."""
     app = web.Application()
-    app.router.add_post("/webhook/mtslink", handle_mtslink_webhook)
-    app.router.add_get("/health", lambda r: web.Response(text="ok"))
+    app.router.add_post("/webhooks/mtslink", handle_mtslink_webhook)
+    app.router.add_get("/health", _health)
+    return app
 
-    _runner = web.AppRunner(app)
-    await _runner.setup()
-    site = web.TCPSite(_runner, "127.0.0.1", settings.WEBHOOK_PORT)
+
+async def run_webhook_server() -> None:
+    """Запускает HTTP-сервер как часть lifecycle приложения.
+
+    Слушает 0.0.0.0:$PORT (Railway задаёт PORT сам) и работает
+    до отмены задачи; cleanup выполняется в stop_webhook_server().
+    """
+    global _runner
+
+    if _runner is not None:
+        logger.warning("webhook server already running")
+        return
+
+    app = build_app()
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", settings.PORT)
     await site.start()
-    logger.info("Webhook server started on port %d", settings.WEBHOOK_PORT)
+    _runner = runner
+    logger.info("Webhook server started on 0.0.0.0:%d", settings.PORT)
+
+    try:
+        await asyncio.Event().wait()
+    except asyncio.CancelledError:
+        logger.info("Webhook server task cancelled")
+        raise
+    finally:
+        await stop_webhook_server()
 
 
 async def stop_webhook_server() -> None:
@@ -298,11 +326,13 @@ async def stop_webhook_server() -> None:
 
     if _active_tasks:
         logger.info("Waiting for %d active webhook tasks to finish...", len(_active_tasks))
-        done, pending = await asyncio.wait(_active_tasks, timeout=30.0)
+        done, pending = await asyncio.wait(list(_active_tasks), timeout=30.0)
         if pending:
             logger.warning("%d webhook tasks did not finish in time", len(pending))
         for t in pending:
             t.cancel()
 
-    if _runner:
-        await _runner.cleanup()
+    runner = _runner
+    _runner = None
+    if runner is not None:
+        await runner.cleanup()
