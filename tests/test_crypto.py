@@ -115,14 +115,17 @@ def test_respondent_hash():
     assert len(h1) == 64
 
 
-def test_decrypt_with_ttl():
+def test_decrypt_with_ttl(monkeypatch):
     import time
     from src.crypto import decrypt_with_ttl, encrypt
     token = encrypt("sensitive_data")
     assert decrypt_with_ttl(token, ttl_seconds=60) == "sensitive_data"
-    time.sleep(1.1)
+
+    now = time.time()
+    monkeypatch.setattr(time, "time", lambda: now + 100)
     with pytest.raises(ValueError, match="Срок действия токена истёк"):
-        decrypt_with_ttl(token, ttl_seconds=1)
+        decrypt_with_ttl(token, ttl_seconds=60)
+
 
 
 
