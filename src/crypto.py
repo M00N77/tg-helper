@@ -37,22 +37,31 @@ def decrypt(ciphertext: str) -> str:
 
 
 def try_decrypt(value: str | None) -> str | None:
-    """Расшифровывает значение, но если оно не является валидным Fernet-токеном
-    (например, легаси-данные, сохранённые в открытом виде до внедрения шифрования),
-    возвращает его как есть. Используется для прозрачной миграции на шифрование.
+    """Расшифровывает значение.
+    Если передан None — возвращает None.
+    Если передан Fernet-токен (начинается с gAAAAA), но расшифровка не удалась (неверный ключ / повреждение) —
+    возвращает None (fail-fast, предотвращает утечку шифротекста в сторонние API).
+    Если это легаси plaintext (не является Fernet-токеном) — возвращает строку как есть.
     """
     if value is None:
         return None
     try:
         return _fernet.decrypt(value.encode()).decode()
     except InvalidToken:
+        if value.startswith("gAAAAA"):
+            logger.error(
+                "try_decrypt: InvalidToken on Fernet token! ENCRYPTION_KEY mismatch or corrupted data. "
+                "Returning None to prevent ciphertext leakage. value_hash=%s",
+                hashlib.sha256(value.encode()).hexdigest()[:12],
+            )
+            return None
         logger.warning(
-            "try_decrypt: InvalidToken — вероятно, изменился ENCRYPTION_KEY "
-            "в .env или данные повреждены. Возвращаю сырой текст (фоллбэк). "
-            "value_hash=%s",
+            "try_decrypt: unencrypted legacy data encountered, returning as is. value_hash=%s",
             hashlib.sha256(value.encode()).hexdigest()[:12],
         )
         return value
     except ValueError:
-        logger.warning("try_decrypt: ValueError — возвращаю как есть. value_hash=%s", hashlib.sha256(value.encode()).hexdigest()[:12])
+        if value.startswith("gAAAAA"):
+            return None
+        logger.warning("try_decrypt: ValueError, returning as is. value_hash=%s", hashlib.sha256(value.encode()).hexdigest()[:12])
         return value

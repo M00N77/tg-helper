@@ -93,3 +93,13 @@ async def test_crypto_service_strict_fails_on_invalid():
 async def test_crypto_service_fallback_raw():
     assert await crypto_service.decrypt_data("legacy-plaintext", fallback_raw=True) == "legacy-plaintext"
 
+
+@pytest.mark.asyncio
+async def test_crypto_service_invalid_fernet_token_returns_none():
+    other_key = Fernet.generate_key().decode()
+    other_fernet = Fernet(other_key.encode())
+    encrypted_with_other_key = other_fernet.encrypt(b"secret").decode()
+    # On fallback_raw=True, an invalid Fernet token must return None (not raw ciphertext)
+    assert await crypto_service.decrypt_data(encrypted_with_other_key, fallback_raw=True) is None
+
+
