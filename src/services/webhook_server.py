@@ -109,6 +109,7 @@ async def _handle_record_ready(data: dict, event_id: str, record_id: str) -> Non
         get_meeting_by_record_id,
         update_meeting_status,
         update_meeting_record_id,
+        try_claim_meeting_for_download,
     )
     from src.services.mtslink_api import get_recording_download_url
 
@@ -127,13 +128,10 @@ async def _handle_record_ready(data: dict, event_id: str, record_id: str) -> Non
                 logger.warning("Record %s already belongs to meeting %s, skipping", record_id, existing.id)
                 return
 
-            if meeting.status not in ("recording", "active"):
-                logger.info("Meeting %s already processed (status=%s), skipping", meeting.id, meeting.status)
+            claimed = await try_claim_meeting_for_download(session, meeting.id, record_id)
+            if not claimed:
+                logger.info("Meeting %s already claimed or processed (status=%s), skipping", meeting.id, meeting.status)
                 return
-
-            await update_meeting_status(session, meeting.id, "downloading")
-            if meeting.mtslink_record_id is None:
-                await update_meeting_record_id(session, meeting.id, record_id)
 
             team = meeting.team
 

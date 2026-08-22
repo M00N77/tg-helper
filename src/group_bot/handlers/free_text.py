@@ -53,6 +53,51 @@ router = Router(name="group_free_text")
 router.message.filter(GroupOnly())
 
 
+async def _async_analyze_sentiment_and_risk(
+    bot,
+    chat_id: int,
+    team_id: int,
+    user_id: int,
+    display_name: str,
+    text: str,
+    provider,
+) -> None:
+    """Фоновый анализ тональности и детекция рисков без блокировки ответа на интент."""
+    try:
+        result = await analyze_sentiment_and_risk(text, provider)
+        if result is None:
+            return
+        async with get_session() as session:
+            await save_message_sentiment(
+                session,
+                team_id=team_id,
+                user_id=user_id,
+                display_name=display_name,
+                sentiment=result.sentiment,
+            )
+            if result.has_risk:
+                await save_message_risk(
+                    session,
+                    team_id=team_id,
+                    user_id=user_id,
+                    display_name=display_name,
+                    message_text=text,
+                    risk_reason=result.risk_reason,
+                )
+                try:
+                    await bot.send_message(
+                        chat_id,
+                        f"⚠️ <b>Обнаружен риск</b>\n"
+                        f"👤 {display_name}\n"
+                        f"📝 {result.risk_reason}",
+                        disable_notification=True,
+                    )
+                except Exception:
+                    pass
+    except Exception:
+        logger.exception("Background sentiment analysis failed")
+
+
 async def _create_kanban_task(
     message: Message, team, title: str, description: str,
     deadline: str | None, target_member,
@@ -649,35 +694,16 @@ async def group_free_text(message: Message) -> None:
 
         tz_name = owner_for_llm.settings.timezone or "UTC"
 
-        result = await analyze_sentiment_and_risk(message.text, providers[0])
-        if result is not None:
-            logger.info(
-                "sentiment_check: chat=%s user=%s has_risk=%s sentiment=%s text=%r",
-                message.chat.id, message.from_user.id,
-                result.has_risk, result.sentiment, message.text[:80],
-            )
-            await save_message_sentiment(
-                session,
-                team_id=team.id,
-                user_id=message.from_user.id,
-                display_name=message.from_user.full_name,
-                sentiment=result.sentiment,
-            )
-            if result.has_risk:
-                await save_message_risk(
-                    session,
-                    team_id=team.id,
-                    user_id=message.from_user.id,
-                    display_name=message.from_user.full_name,
-                    message_text=message.text,
-                    risk_reason=result.risk_reason,
-                )
-                await message.answer(
-                    f"⚠️ <b>Обнаружен риск</b>\n"
-                    f"👤 {message.from_user.full_name}\n"
-                    f"📝 {result.risk_reason}",
-                    disable_notification=True,
-                )
+        # Фоновый анализ тональности/рисков — не блокирует и не задерживает роутинг интента
+        asyncio.create_task(_async_analyze_sentiment_and_risk(
+            message.bot,
+            message.chat.id,
+            team.id,
+            message.from_user.id,
+            message.from_user.full_name,
+            message.text,
+            providers[0],
+        ))
 
     now_local_str = now_in_tz(tz_name).strftime("%Y-%m-%d %H:%M")
 

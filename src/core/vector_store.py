@@ -82,9 +82,11 @@ class VectorStore:
             self._dim = dim
 
     @staticmethod
-    def _point_id(user_id: int, peer_id: int, message_id: int) -> int:
-        # 64-битный int = user(16) | peer(24) | msg(24)
-        return ((user_id & 0xFFFF) << 48) | ((peer_id & 0xFFFFFF) << 24) | (message_id & 0xFFFFFF)
+    def _point_id(user_id: int, peer_id: int, message_id: int) -> str:
+        import uuid
+        # Детерминированный UUIDv5 — устраняет коллизии при больших telegram ID
+        raw = f"{user_id}:{peer_id}:{message_id}"
+        return str(uuid.uuid5(uuid.NAMESPACE_OID, raw))
 
     async def upsert(
         self,

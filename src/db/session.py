@@ -19,13 +19,19 @@ if hasattr(asyncio, "WindowsSelectorEventLoopPolicy"):
 
 logger = logging.getLogger(__name__)
 
-engine = create_async_engine(
-    settings.database_url,
-    future=True,
-    pool_size=5,
-    max_overflow=10,
-    pool_pre_ping=True,
-)
+engine_kwargs = {
+    "future": True,
+    "pool_pre_ping": True,
+}
+if "sqlite" not in settings.database_url:
+    engine_kwargs.update({
+        "pool_size": 10,
+        "max_overflow": 20,
+        "pool_timeout": 15.0,
+        "pool_recycle": 1800,
+    })
+
+engine = create_async_engine(settings.database_url, **engine_kwargs)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
 

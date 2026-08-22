@@ -37,6 +37,14 @@ def decrypt(ciphertext: str) -> str:
         raise ValueError("Не удалось расшифровать: неверный ключ или повреждённые данные") from exc
 
 
+def decrypt_with_ttl(ciphertext: str, ttl_seconds: int = 86400 * 90) -> str:
+    """Расшифровывает значение с проверкой срока жизни Fernet-токена."""
+    try:
+        return _fernet.decrypt(ciphertext.encode(), ttl=ttl_seconds).decode()
+    except InvalidToken as exc:
+        raise ValueError("Срок действия токена истёк или токен недействителен") from exc
+
+
 def try_decrypt(value: str | None) -> str | None:
     """Расшифровывает значение.
     Если передан None — возвращает None.

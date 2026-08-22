@@ -1220,6 +1220,28 @@ async def update_meeting_status(
     return meeting
 
 
+async def try_claim_meeting_for_download(
+    session: AsyncSession,
+    meeting_id: int,
+    record_id: str | None = None,
+) -> bool:
+    """Атомарный захват встречи для скачивания/обработки.
+    Переводит статус в 'downloading' только если статус 'recording' или 'active'.
+    Возвращает True если статус успешно захвачен, False если встреча уже обрабатывается (идемпотентность).
+    """
+    from sqlalchemy import update
+    values: dict = {"status": "downloading"}
+    if record_id:
+        values["mtslink_record_id"] = record_id
+    result = await session.execute(
+        update(Meeting)
+        .where(Meeting.id == meeting_id, Meeting.status.in_(["recording", "active"]))
+        .values(**values)
+    )
+    await session.commit()
+    return result.rowcount > 0
+
+
 async def update_meeting_transcript(
     session: AsyncSession,
     meeting_id: int,
