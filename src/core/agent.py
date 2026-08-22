@@ -415,32 +415,6 @@ def _safe_parse(raw: str) -> dict[str, Any]:
         except json.JSONDecodeError:
             pass
 
-    # Шаг 3: если два объекта подряд — завернуть в multi
-    import re
-    objects = []
-    for m in re.finditer(r'\{', raw):
-        depth = 0
-        for i in range(m.start(), len(raw)):
-            if raw[i] == '{':
-                depth += 1
-            elif raw[i] == '}':
-                depth -= 1
-                if depth == 0:
-                    try:
-                        obj = json.loads(raw[m.start():i + 1])
-                        if isinstance(obj.get("intent"), str):
-                            objects.append(obj)
-                    except Exception:
-                        pass
-                    break
-        if len(objects) >= 10:
-            break
-
-    if len(objects) == 1:
-        return objects[0]
-    if len(objects) > 1:
-        return {"intent": "multi", "actions": objects}
-
     logger.warning("agent: bad JSON: %r", raw[:200])
     return {"intent": "unknown"}
 
