@@ -37,3 +37,17 @@ def test_data_dir():
     path = settings.data_dir
     assert path.exists()
     assert path.is_dir()
+
+
+def test_webhook_secret_required_with_base_url():
+    import pytest
+    with pytest.raises(ValueError, match="WEBHOOK_SECRET is required"):
+        Settings(
+            bot_token="123:abc",
+            owner_telegram_id=12345,
+            encryption_key="key",
+            database_url="postgresql+asyncpg://u:p@localhost/db",
+            WEBHOOK_BASE_URL="https://my.railway.app",
+            WEBHOOK_SECRET="",
+        )
+

@@ -35,12 +35,6 @@ class Settings(BaseSettings):
         description="Дополнительные Telegram user_id, которым разрешено пользоваться ботом (через запятую)",
     )
 
-    @field_validator("allowed_telegram_ids", mode="before")
-    @classmethod
-    def parse_comma_separated(cls, v: object) -> object:
-        if isinstance(v, str):
-            v = [int(x.strip()) for x in v.split(",") if x.strip()]
-        return v
     encryption_key: str = Field(..., description="Fernet-ключ (base64)")
     database_url: str = Field(..., description="PostgreSQL connection string (postgresql+asyncpg://...)")
 
@@ -54,11 +48,27 @@ class Settings(BaseSettings):
     def all_allowed_ids(self) -> set[int]:
         return {self.owner_telegram_id} | set(self.allowed_telegram_ids)
 
-
     WEBHOOK_BASE_URL: str = ""
     WEBHOOK_SECRET: str = ""
     # Порт HTTP-сервера (Railway передаёт PORT сам; локально по умолчанию 8080)
     PORT: int = 8080
+
+    @field_validator("allowed_telegram_ids", mode="before")
+    @classmethod
+    def parse_comma_separated(cls, v: object) -> object:
+        if isinstance(v, str):
+            v = [int(x.strip()) for x in v.split(",") if x.strip()]
+        return v
+
+    from pydantic import model_validator
+
+    @model_validator(mode="after")
+    def validate_webhook_secret(self) -> "Settings":
+        if self.WEBHOOK_BASE_URL and not self.WEBHOOK_SECRET:
+            raise ValueError(
+                "WEBHOOK_SECRET is required when WEBHOOK_BASE_URL is set to prevent unauthorized webhook invocation."
+            )
+        return self
 
     @property
     def mtslink_webhook_url(self) -> str | None:
