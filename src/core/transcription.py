@@ -41,14 +41,16 @@ class TranscriptionService:
 
     async def _transcribe_api(self, path: Path, openai_key: str, language: str | None) -> str:
         from openai import AsyncOpenAI
+        import aiofiles
 
         client = AsyncOpenAI(api_key=openai_key)
-        with path.open("rb") as f:
-            resp = await client.audio.transcriptions.create(
-                model="whisper-1",
-                file=f,
-                language=language,
-            )
+        async with aiofiles.open(path, "rb") as f:
+            content = await f.read()
+        resp = await client.audio.transcriptions.create(
+            model="whisper-1",
+            file=(path.name, content),
+            language=language,
+        )
         return resp.text
 
     async def transcribe(

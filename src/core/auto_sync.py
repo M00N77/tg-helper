@@ -24,10 +24,12 @@ async def auto_sync_loop() -> None:
             if manager is not None:
                 client = manager.get_client(app_settings.owner_telegram_id)
                 if client is not None:
-                    async with get_session() as session:
-                        owner = await get_or_create_user(session, app_settings.owner_telegram_id)
-                    stats = await sync_dialogs(client, owner, limit=500)
-                    logger.info("auto-sync done: %s", stats)
+                    sem = manager.get_semaphore(app_settings.owner_telegram_id)
+                    async with sem:
+                        async with get_session() as session:
+                            owner = await get_or_create_user(session, app_settings.owner_telegram_id)
+                        stats = await sync_dialogs(client, owner, limit=500)
+                        logger.info("auto-sync done: %s", stats)
         except Exception:
             logger.exception("auto-sync tick failed")
         await asyncio.sleep(AUTO_SYNC_SECONDS)
