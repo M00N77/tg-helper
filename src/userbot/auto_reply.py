@@ -126,9 +126,7 @@ async def _build_reply_text(
         return None
 
 
-async def _make_handler(client: TelegramClient, owner_telegram_id: int):
-    """Возвращает event handler, замкнутый на owner_telegram_id."""
-
+def attach_auto_reply(client: TelegramClient, owner_telegram_id: int) -> None:
     async def handler(event: events.NewMessage.Event) -> None:
         try:
             msg: TgMessage = event.message
@@ -210,14 +208,5 @@ async def _make_handler(client: TelegramClient, owner_telegram_id: int):
         except Exception:
             logger.exception("auto-reply handler failed")
 
-    return handler
-
-
-def attach_auto_reply(client: TelegramClient, owner_telegram_id: int) -> None:
-
-    async def _wrapper(event):
-        h = await _make_handler(client, owner_telegram_id)
-        await h(event)
-
-    client.add_event_handler(_wrapper, events.NewMessage(incoming=True))
+    client.add_event_handler(handler, events.NewMessage(incoming=True))
     logger.info("Auto-reply handler attached for user %s", owner_telegram_id)

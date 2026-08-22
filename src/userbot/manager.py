@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from dataclasses import dataclass, field
 
@@ -28,11 +29,20 @@ _MANAGER_SINGLETON: "UserbotManager | None" = None
 @dataclass
 class UserbotManager:
     _clients: dict[int, TelegramClient] = field(default_factory=dict)
+    _semaphores: dict[int, asyncio.Semaphore] = field(default_factory=dict)
     _pending: dict[int, PendingLogin] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         global _MANAGER_SINGLETON
         _MANAGER_SINGLETON = self
+
+    def get_semaphore(self, telegram_id: int, max_concurrent: int = 3) -> asyncio.Semaphore:
+        """Возвращает семафор для ограничения параллельных запросов к MTProto."""
+        sem = self._semaphores.get(telegram_id)
+        if sem is None:
+            sem = asyncio.Semaphore(max_concurrent)
+            self._semaphores[telegram_id] = sem
+        return sem
 
     async def restore_all(self) -> None:
         async with get_session() as session:
