@@ -54,9 +54,10 @@ from src.userbot.manager import UserbotManager
 
 logger = logging.getLogger(__name__)
 
-# Pending задачи ожидающие выбора исполнителя
-# ключ: chat_id, значение: dict с данными задачи
-_pending_assignee_selection: dict[int, dict] = {}
+from src.core.ttl_dict import TTLDict
+
+# Pending задачи ожидающие выбора исполнителя (TTL 10 минут)
+_pending_assignee_selection = TTLDict(ttl=600, max_size=500)
 
 
 def _build_yougile_user_keyboard(

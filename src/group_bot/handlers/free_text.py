@@ -37,9 +37,10 @@ from src.db.repo import get_team_members
 
 logger = logging.getLogger(__name__)
 
-# Временное хранилище задач, ожидающих выбора исполнителя
-# ключ: message_id сообщения с кнопками, значение: dict с данными задачи
-_pending_task_selection: dict[int, dict] = {}
+from src.core.ttl_dict import TTLDict
+
+# Временное хранилище задач, ожидающих выбора исполнителя (TTL 10 минут)
+_pending_task_selection = TTLDict(ttl=600, max_size=500)
 
 
 async def _decrypt_kanban_token(team) -> str | None:

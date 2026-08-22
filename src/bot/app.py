@@ -59,8 +59,10 @@ logger = logging.getLogger(__name__)
 debug_logger = logging.getLogger("debug.catch_all")
 debug_router = Router(name="debug_catch_all")
 
+from src.core.ttl_dict import TTLDict
+
 # Cooldown: какие пользователи были уведомлены (user_id -> timestamp)
-_debug_notified: dict[int, float] = {}
+_debug_notified = TTLDict(ttl=300, max_size=1000)
 
 
 @debug_router.message()
