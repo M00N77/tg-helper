@@ -103,3 +103,16 @@ async def test_crypto_service_invalid_fernet_token_returns_none():
     assert await crypto_service.decrypt_data(encrypted_with_other_key, fallback_raw=True) is None
 
 
+def test_respondent_hash():
+    from src.crypto import respondent_hash
+    h1 = respondent_hash(12345, 1)
+    h2 = respondent_hash(12345, 1)
+    h3 = respondent_hash(12345, 2)
+    h4 = respondent_hash(67890, 1)
+    assert h1 == h2
+    assert h1 != h3
+    assert h1 != h4
+    assert len(h1) == 64
+
+
+

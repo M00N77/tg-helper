@@ -11,7 +11,8 @@ logger = logging.getLogger(__name__)
 
 _fernet = Fernet(settings.encryption_key.encode())
 
-_HMAC_KEY = settings.encryption_key.encode()
+# Key separation: отдельный ключ для HMAC псевдонимов респондентов, деривированный с префиксом домена
+_HMAC_KEY = hashlib.sha256(b"tghelper:respondent-hmac:" + settings.encryption_key.encode()).digest()
 
 
 def respondent_hash(telegram_id: int, session_id: int) -> str:
