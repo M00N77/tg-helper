@@ -1,7 +1,9 @@
 """Утилиты для работы с диалогами Telethon."""
+import asyncio
 import logging
 
 from telethon import TelegramClient
+from telethon.errors import FloodWaitError
 from telethon.tl.types import Channel, Chat, User as TgUser
 
 from src.core.chat_service import load_chat
@@ -39,33 +41,40 @@ async def sync_dialogs(client: TelegramClient, owner: User, *, limit: int = 200)
     async with get_session() as session:
         # archived=True — это отдельная архивная папка, делаем два прохода
         for archived_pass in (False, True):
-            async for dialog in client.iter_dialogs(limit=limit, archived=archived_pass):
-                entity = dialog.entity
-                kind = _entity_kind(entity)
-                is_bot = bool(getattr(entity, "bot", False)) if isinstance(entity, TgUser) else False
-                is_archived = bool(getattr(dialog, "archived", archived_pass))
-                await upsert_contact(
-                    session,
-                    owner,
-                    peer_id=entity.id,
-                    peer_kind=kind,
-                    is_bot=is_bot,
-                    is_archived=is_archived,
-                    display_name=_entity_display_name(entity),
-                    username=getattr(entity, "username", None),
-                    phone=getattr(entity, "phone", None),
-                )
-                if is_archived:
-                    stats["archived"] += 1
-                    continue
-                if kind == "user" and is_bot:
-                    stats["bots"] += 1
-                elif kind == "user":
-                    stats["users"] += 1
-                elif kind == "chat":
-                    stats["chats"] += 1
-                else:
-                    stats["channels"] += 1
+            try:
+                async for dialog in client.iter_dialogs(limit=limit, archived=archived_pass):
+                    entity = dialog.entity
+                    kind = _entity_kind(entity)
+                    is_bot = bool(getattr(entity, "bot", False)) if isinstance(entity, TgUser) else False
+                    is_archived = bool(getattr(dialog, "archived", archived_pass))
+                    await upsert_contact(
+                        session,
+                        owner,
+                        peer_id=entity.id,
+                        peer_kind=kind,
+                        is_bot=is_bot,
+                        is_archived=is_archived,
+                        display_name=_entity_display_name(entity),
+                        username=getattr(entity, "username", None),
+                        phone=getattr(entity, "phone", None),
+                    )
+                    if is_archived:
+                        stats["archived"] += 1
+                        continue
+                    if kind == "user" and is_bot:
+                        stats["bots"] += 1
+                    elif kind == "user":
+                        stats["users"] += 1
+                    elif kind == "chat":
+                        stats["chats"] += 1
+                    else:
+                        stats["channels"] += 1
+            except FloodWaitError as e:
+                if e.seconds > 60:
+                    logger.error("sync_dialogs: FloodWait %ds, aborting", e.seconds)
+                    break
+                logger.warning("sync_dialogs: FloodWait %ds, sleeping", e.seconds)
+                await asyncio.sleep(e.seconds + 1)
     return stats
 
 
@@ -80,26 +89,31 @@ async def prefetch_recent_messages(
 ) -> dict[str, int]:
     # один разовый прогон при /sync — заполняет БД и FTS5 для холодного старта
     stats = {"chats": 0, "messages": 0, "skipped": 0}
-    async for dialog in client.iter_dialogs(limit=top_n * 3, archived=False):
-        if stats["chats"] >= top_n:
-            break
-        entity = dialog.entity
-        is_bot = isinstance(entity, TgUser) and bool(getattr(entity, "bot", False))
-        if skip_bots and is_bot:
-            stats["skipped"] += 1
-            continue
-        is_channel_only = isinstance(entity, Channel) and getattr(entity, "broadcast", False)
-        if skip_channels and is_channel_only:
-            stats["skipped"] += 1
-            continue
-        try:
-            msgs = await load_chat(
-                client, owner_telegram_id, entity.id,
-                limit=per_chat, transcribe=False, parse_docs=False, incremental=True,
-            )
-            stats["chats"] += 1
-            stats["messages"] += len(msgs)
-        except Exception:
-            logger.exception("prefetch failed for peer %s", entity.id)
-            stats["skipped"] += 1
+    try:
+        async for dialog in client.iter_dialogs(limit=top_n * 3, archived=False):
+            if stats["chats"] >= top_n:
+                break
+            entity = dialog.entity
+            is_bot = isinstance(entity, TgUser) and bool(getattr(entity, "bot", False))
+            if skip_bots and is_bot:
+                stats["skipped"] += 1
+                continue
+            is_channel_only = isinstance(entity, Channel) and getattr(entity, "broadcast", False)
+            if skip_channels and is_channel_only:
+                stats["skipped"] += 1
+                continue
+            try:
+                msgs = await load_chat(
+                    client, owner_telegram_id, entity.id,
+                    limit=per_chat, transcribe=False, parse_docs=False, incremental=True,
+                )
+                stats["chats"] += 1
+                stats["messages"] += len(msgs)
+            except FloodWaitError:
+                raise  # пробрасываем — обработаем выше
+            except Exception:
+                logger.exception("prefetch failed for peer %s", entity.id)
+                stats["skipped"] += 1
+    except FloodWaitError as e:
+        logger.warning("prefetch: FloodWait %ds, stopping early with %d chats done", e.seconds, stats["chats"])
     return stats

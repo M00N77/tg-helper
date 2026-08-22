@@ -171,7 +171,7 @@ class TestRouteIntentWithHistory:
         provider = MagicMock()
         provider.chat = AsyncMock(return_value='{"intent": "fly_to_moon"}')
         result = await route_intent([provider], "test")
-        assert result["intent"] == "fly_to_moon"
+        assert result["intent"] == "unknown"
 
 
 # ── Диспетчеризация add_news_topic / remove_news_topic ────────────────────

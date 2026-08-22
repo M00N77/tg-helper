@@ -188,7 +188,8 @@ async def _make_handler(client: TelegramClient, owner_telegram_id: int):
                 if not reply:
                     return
 
-            await event.respond(reply)
+            from src.userbot.flood_guard import flood_safe
+            await flood_safe(event.respond(reply), label="auto_reply")
 
             async with get_session() as session:
                 owner = await get_or_create_user(session, owner_telegram_id)

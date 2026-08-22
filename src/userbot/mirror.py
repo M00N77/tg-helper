@@ -43,7 +43,8 @@ async def _sender_label(msg: TgMessage) -> str | None:
     if msg.out:
         return None  # это мы сами
     try:
-        sender = await msg.get_sender()
+        from src.userbot.flood_guard import flood_safe
+        sender = await flood_safe(msg.get_sender(), label="mirror.get_sender")
     except Exception:
         sender = None
     if sender is None:
@@ -71,7 +72,8 @@ def attach_mirror(client: TelegramClient, owner_telegram_id: int) -> None:
                 owner = await get_or_create_user(session, owner_telegram_id)
 
                 try:
-                    chat = await event.get_chat()
+                    from src.userbot.flood_guard import flood_safe
+                    chat = await flood_safe(event.get_chat(), label="mirror.get_chat")
                 except Exception:
                     chat = None
                 if chat is not None:
