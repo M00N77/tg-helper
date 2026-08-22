@@ -30,10 +30,18 @@ class VectorHit:
 
 class VectorStore:
     def __init__(self) -> None:
+        self._client: QdrantClient | None = None
+        self._lock = asyncio.Lock()
+        self._dim: int | None = None
+
+    def _get_client(self) -> QdrantClient:
+        if self._client is not None:
+            return self._client
         path = settings.data_dir / "qdrant"
         path.mkdir(parents=True, exist_ok=True)
         try:
             self._client = QdrantClient(path=str(path))
+            return self._client
         except (RuntimeError, PermissionError) as exc:
             msg = (
                 f"Не удалось открыть Qdrant storage {path}.\n"
@@ -45,10 +53,7 @@ class VectorStore:
                 "Решение: завершите дублирующийся процесс или удалите .lock вручную."
             )
             logger.critical(msg)
-            print(msg, file=sys.stderr)
-            sys.exit(1)
-        self._lock = asyncio.Lock()
-        self._dim: int | None = None
+            raise RuntimeError(msg) from exc
 
     async def _ensure_collection(self, dim: int) -> None:
         if self._dim == dim:
@@ -58,22 +63,23 @@ class VectorStore:
                 return
 
             def _check_or_create() -> None:
-                existing = {c.name for c in self._client.get_collections().collections}
+                client = self._get_client()
+                existing = {c.name for c in client.get_collections().collections}
                 if COLLECTION in existing:
-                    info = self._client.get_collection(COLLECTION)
+                    info = client.get_collection(COLLECTION)
                     actual = info.config.params.vectors.size
                     if actual != dim:
                         logger.warning(
                             "Recreating Qdrant collection %s: dim %d → %d",
                             COLLECTION, actual, dim,
                         )
-                        self._client.delete_collection(COLLECTION)
-                        self._client.create_collection(
+                        client.delete_collection(COLLECTION)
+                        client.create_collection(
                             COLLECTION,
                             vectors_config=qmodels.VectorParams(size=dim, distance=qmodels.Distance.COSINE),
                         )
                 else:
-                    self._client.create_collection(
+                    client.create_collection(
                         COLLECTION,
                         vectors_config=qmodels.VectorParams(size=dim, distance=qmodels.Distance.COSINE),
                     )
@@ -102,7 +108,7 @@ class VectorStore:
         await self._ensure_collection(len(embedding))
 
         def _do() -> None:
-            self._client.upsert(
+            self._get_client().upsert(
                 collection_name=COLLECTION,
                 points=[
                     qmodels.PointStruct(
@@ -141,7 +147,7 @@ class VectorStore:
             )
 
         def _do() -> list[qmodels.ScoredPoint]:
-            return self._client.search(
+            return self._get_client().search(
                 collection_name=COLLECTION,
                 query_vector=embedding,
                 limit=limit,
@@ -162,13 +168,13 @@ class VectorStore:
             for p in raw
         ]
 
-
     async def close(self) -> None:
         def _do() -> None:
-            try:
-                self._client.close()
-            except Exception:
-                pass
+            if self._client is not None:
+                try:
+                    self._client.close()
+                except Exception:
+                    pass
         await asyncio.to_thread(_do)
 
 
