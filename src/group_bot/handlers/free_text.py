@@ -52,6 +52,9 @@ async def _decrypt_kanban_token(team) -> str | None:
 router = Router(name="group_free_text")
 router.message.filter(GroupOnly())
 
+# Набор сильных ссылок на фоновые задачи для предотвращения их уничтожения сборщиком мусора (GC)
+_bg_tasks: set[asyncio.Task] = set()
+
 
 async def _async_analyze_sentiment_and_risk(
     bot,
@@ -695,7 +698,7 @@ async def group_free_text(message: Message) -> None:
         tz_name = owner_for_llm.settings.timezone or "UTC"
 
         # Фоновый анализ тональности/рисков — не блокирует и не задерживает роутинг интента
-        asyncio.create_task(_async_analyze_sentiment_and_risk(
+        t = asyncio.create_task(_async_analyze_sentiment_and_risk(
             message.bot,
             message.chat.id,
             team.id,
@@ -704,6 +707,8 @@ async def group_free_text(message: Message) -> None:
             message.text,
             providers[0],
         ))
+        _bg_tasks.add(t)
+        t.add_done_callback(_bg_tasks.discard)
 
     now_local_str = now_in_tz(tz_name).strftime("%Y-%m-%d %H:%M")
 
