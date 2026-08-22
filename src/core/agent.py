@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from src.core.intent_guard import sanitize_user_text, validate_intent
 from src.llm.base import ChatMessage, LLMProvider
 from src.llm.router import llm_with_fallback
 
@@ -539,17 +540,25 @@ async def route_intent(
         system = dictionary_block + "\n\n" + system
     if history_block:
         system = system + "\n\n" + history_block
+    safe_text = sanitize_user_text(user_text)
     raw = await llm_with_fallback(
         providers,
         [
             ChatMessage(role="system", content=system),
-            ChatMessage(role="user", content=user_text),
+            ChatMessage(role="user", content=safe_text),
         ],
         heavy=heavy,
         notify_bot=notify_bot,
         notify_chat_id=notify_chat_id,
     )
-    return _safe_parse(raw)
+    parsed = _safe_parse(raw)
+    # Валидация интента (и вложенных multi-actions) по allowlist
+    parsed["intent"] = validate_intent(parsed.get("intent"), "dm")
+    if parsed["intent"] == "multi":
+        for action in parsed.get("actions") or []:
+            if isinstance(action, dict):
+                action["intent"] = validate_intent(action.get("intent"), "dm")
+    return parsed
 
 
 GROUP_AGENT_SYSTEM = """\
@@ -644,14 +653,17 @@ async def route_group_intent(
         )
     if dictionary_block:
         system = dictionary_block + "\n\n" + system
+    safe_text = sanitize_user_text(user_text)
     raw = await llm_with_fallback(
         providers,
         [
             ChatMessage(role="system", content=system),
-            ChatMessage(role="user", content=user_text),
+            ChatMessage(role="user", content=safe_text),
         ],
     )
-    return _safe_parse(raw)
+    parsed = _safe_parse(raw)
+    parsed["intent"] = validate_intent(parsed.get("intent"), "group")
+    return parsed
 
 
 async def process_free_text(
