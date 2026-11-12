@@ -1,0 +1,166 @@
+@startuml uml-class
+skinparam defaultFontName Arial
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+hide empty members
+title TelegramHelper — диаграмма классов (доменная модель и LLM)
+
+package "Пользователь и переписка" {
+  class User {
+    - id: int
+    - telegram_id: int
+    - display_name: str
+    - created_at: datetime
+  }
+  class UserSettings {
+    - timezone: str
+    - llm_provider: str
+    - digest_time: str
+    - reminders_enabled: bool
+    - transcription_mode: str
+  }
+  class TelegramSession {
+    - api_id: int
+    - api_hash_enc: str
+    - session_string_enc: str
+  }
+  class ApiKey {
+    - provider: str
+    - key_enc: str
+  }
+  class Contact {
+    - peer_id: int
+    - peer_kind: str
+    - display_name: str
+    - style_profile: dict
+  }
+  class Message {
+    - peer_id: int
+    - date: datetime
+    - kind: str
+    - text: str
+    - transcript: str
+  }
+  class Commitment {
+    - direction: str
+    - text: str
+    - deadline_at: datetime
+    - status: str
+    + markDone(): void
+    + moveToTrash(): void
+  }
+}
+
+package "Команда" {
+  class Team {
+    - id: int
+    - name: str
+    - chat_id: int
+    - kanban_token: str
+    - active_board_id: str
+    - standup_time: str
+    + linkBoard(token, boardId): void
+  }
+  class TeamMember {
+    - telegram_id: int
+    - role: str
+    - display_name: str
+    - yougile_user_id: str
+  }
+  class PendingInvite {
+    - username: str
+    - created_at: datetime
+  }
+  class PendingTeamTask {
+    - creator_telegram_id: int
+    - assignee_telegram_id: int
+    - title: str
+    - status: TaskStatus
+    - yougile_task_id: str
+    + approve(): void
+    + reject(): void
+  }
+  enum TaskStatus {
+    PENDING
+    PROCESSING
+    APPROVED
+    REJECTED
+  }
+  class Meeting {
+    - meeting_url: str
+    - platform: str
+    - transcript: str
+    - summary: str
+    - status: str
+    + process(): list<MeetingTask>
+  }
+  class MeetingTask {
+    - title: str
+    - assignee_name: str
+    - deadline_at: datetime
+    - created_in_kanban: bool
+  }
+  class Standup {
+    - date: datetime
+    - done_today: str
+    - plan_today: str
+    - blockers: str
+    - mood: str
+  }
+  class Blocker {
+    - description: str
+    - severity: str
+    - status: str
+    + escalate(): void
+    + resolve(): void
+  }
+}
+
+package "LLM" {
+  interface LLMProvider <<Protocol>> {
+    + name: str
+    + validate_key(): bool
+    + chat(messages, heavy): str
+    + embed(text): list<float>
+  }
+  class OpenAIProvider
+  class GeminiProvider
+  class GroqProvider
+  class GigaChatProvider
+  class LLMRouter {
+    + get_provider_chain(user): list<LLMProvider>
+    + llm_with_fallback(messages): str
+  }
+  class Agent {
+    + handle(text): Action
+  }
+}
+
+User "1" *-- "1" UserSettings
+User "1" *-- "0..1" TelegramSession
+User "1" *-- "*" ApiKey
+User "1" o-- "*" Contact
+User "1" o-- "*" Message
+User "1" o-- "*" Commitment
+Contact "1" -- "*" Message : peer_id
+
+Team "1" *-- "*" TeamMember
+Team "1" *-- "*" PendingInvite
+Team "1" *-- "*" PendingTeamTask
+Team "1" *-- "*" Meeting
+Team "1" *-- "*" Standup
+Team "1" *-- "*" Blocker
+Meeting "1" *-- "*" MeetingTask
+Standup "1" o-- "*" Blocker : выявлены в
+PendingTeamTask --> TaskStatus
+
+OpenAIProvider ..|> LLMProvider
+GeminiProvider ..|> LLMProvider
+GroqProvider ..|> LLMProvider
+GigaChatProvider ..|> LLMProvider
+LLMRouter "1" o-- "1..4" LLMProvider : цепочка фолбэка
+Agent --> LLMRouter
+Agent ..> PendingTeamTask : создаёт
+Agent ..> Commitment : создаёт
+Meeting ..> LLMRouter : саммари
+@enduml

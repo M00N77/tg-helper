@@ -1,0 +1,61 @@
+@startuml uml-usecase
+left to right direction
+skinparam defaultFontName Arial
+skinparam shadowing false
+title TelegramHelper — диаграмма вариантов использования
+
+actor "Владелец\nаккаунта" as owner
+actor "Участник\nкоманды" as member
+actor "Директор" as director
+actor "МТС Линк" as mts <<система>>
+
+member <|-- director
+
+rectangle "TelegramHelper" {
+  usecase "Подключить\nTelegram-аккаунт" as UC1
+  usecase "Задать API-ключи\nи настройки" as UC2
+  usecase "Отдать команду\nтекстом или голосом" as UC3
+  usecase "Распознать интент\n(LLM)" as UC3a
+  usecase "Получить саммари\nи искать по чату" as UC4
+  usecase "Управлять обещаниями\nи напоминаниями" as UC5
+  usecase "Получать дайджест" as UC6
+  usecase "Создать команду" as UC7
+  usecase "Пригласить участника" as UC8
+  usecase "Привязать доску YouGile" as UC9
+  usecase "Создать задачу\nна доске" as UC10
+  usecase "Утвердить задачу\nна другого" as UC11
+  usecase "Обработать запись\nвстречи" as UC12
+  usecase "Отредактировать задачи\nиз встречи" as UC12a
+  usecase "Ответить на стендап" as UC13
+  usecase "Пройти пульс-опрос" as UC14
+  usecase "Получить эскалацию\nблокера" as UC15
+}
+
+owner --> UC1
+owner --> UC2
+owner --> UC3
+owner --> UC4
+owner --> UC5
+owner --> UC6
+
+member --> UC3
+member --> UC10
+member --> UC13
+member --> UC14
+
+director --> UC7
+director --> UC8
+director --> UC9
+director --> UC11
+director --> UC12
+director --> UC15
+
+mts --> UC12
+
+UC3 ..> UC3a : <<include>>
+UC10 ..> UC3a : <<include>>
+UC11 .> UC10 : <<extend>>
+UC12a .> UC12 : <<extend>>
+UC12 ..> UC10 : <<include>>
+UC5 ..> UC3a : <<include>>
+@enduml
