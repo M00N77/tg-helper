@@ -16,7 +16,7 @@
 | 1 | [swot.md](swot.md) | SWOT-анализ |
 | 1 | [risks.md](risks.md) | Реестр рисков (8 рисков) |
 | 1 | [defense-week1.md](defense-week1.md) | План презентации и текст доклада |
-| 2 | [requirements.md](requirements.md) | 15 ФТ, 15 НФТ, MoSCoW, матрица ценность/сложность |
+| 2 | [requirements.md](requirements.md) | 17 ФТ, 15 НФТ, MoSCoW, матрица ценность/сложность |
 | 2 | [stakeholders.md](stakeholders.md) | Стейкхолдеры, карта, интервью |
 | 2 | [user-stories.md](user-stories.md) | 7 User Story, Given-When-Then, Story Map |
 | 2 | [defense-week2.md](defense-week2.md) | Текст доклада недели 2 |
