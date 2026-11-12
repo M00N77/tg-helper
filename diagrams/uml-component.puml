@@ -1,0 +1,77 @@
+@startuml uml-component
+skinparam componentStyle uml2
+skinparam defaultFontName Arial
+skinparam shadowing false
+title TelegramHelper — диаграмма компонентов
+
+actor "Пользователь\n(Telegram)" as user
+
+package "TelegramHelper (один процесс Python)" {
+  component "Control Bot\n(aiogram: команды, FSM,\nменю, фильтры, RBAC)" as bot
+  component "Userbot\n(Telethon: зеркалирование\nсообщений, диалоги)" as userbot
+  component "Webhook Server\n(aiohttp: /health,\n/webhooks/mtslink)" as webhook
+
+  package "Core" {
+    component "Agent\n(распознавание интентов)" as agent
+    component "Meeting Processor\n(запись → саммари → задачи)" as meeting
+    component "Transcription\n(faster-whisper / Whisper API)" as transcr
+    component "Chat Service\nSummarizer, Search" as chat
+    component "Commitments\nReminders, Digest" as remind
+    component "Standups, Blockers\nActivities, Sentiment" as pm
+    component "Lifecycle\n(фоновые задачи)" as life
+  }
+
+  component "LLM Router\n(тиры + цепочка фолбэка)" as router
+  interface "LLMProvider" as illm
+  component "Repository\n(SQLAlchemy async)" as repo
+  component "Crypto\n(Fernet)" as crypto
+  component "Vector Store" as vstore
+}
+
+database "PostgreSQL" as db
+database "Qdrant\n(embedded)" as qdrant
+
+cloud "Telegram\nBot API" as tgbot
+cloud "Telegram\nMTProto" as mtproto
+cloud "LLM-провайдеры\nOpenAI · Gemini\nGroq · GigaChat" as llm
+cloud "YouGile API" as yougile
+cloud "МТС Линк API" as mts
+
+user --> tgbot
+tgbot <--> bot : updates / ответы
+mtproto <--> userbot : MTProto
+
+bot --> agent : свободный текст, голос
+bot --> pm
+bot --> remind
+bot --> chat
+bot --> meeting
+userbot --> repo : сообщения
+webhook --> meeting : recordFile.ready
+
+agent --> router
+meeting --> transcr
+meeting --> router
+chat --> router
+pm --> router
+remind --> router
+chat --> vstore
+life ..> remind : планировщики
+life ..> pm : планировщики
+
+router -( illm
+illm - llm
+
+agent --> yougile : задачи
+meeting --> yougile : задачи
+meeting --> mts : комнаты, записи
+mts --> webhook : вебхук
+
+agent --> repo
+meeting --> repo
+remind --> repo
+pm --> repo
+repo --> crypto : секреты
+repo --> db : SQL
+vstore --> qdrant
+@enduml
